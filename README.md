@@ -1,5 +1,7 @@
 # obsidian-polished
 
+![obsidian-polished logo](internal/uiassets/logo.png)
+
 `obsidian-polished` exports Obsidian vaults into portable static HTML.
 
 It supports:

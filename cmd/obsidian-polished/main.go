@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hlfshell/obsidian-polished/internal/exporter"
+	"github.com/hlfshell/obsidian-polished/internal/uiassets"
 	"github.com/hlfshell/obsidian-polished/internal/watcher"
 	"gopkg.in/yaml.v3"
 )
@@ -713,6 +714,12 @@ func runOnce(rc runConfig) error {
 		opts := exporter.Options{
 			VaultRoot: nb.vault,
 			OutDir:    nb.outDir,
+			HubIndexPath: func() string {
+				if len(rc.notebooks) > 1 {
+					return filepath.Join(rc.outRoot, "index.html")
+				}
+				return ""
+			}(),
 			RootNote:  nb.rootNote,
 			MaxDepth:  nb.maxDepth,
 			ThemeMode: nb.theme,
@@ -732,6 +739,12 @@ func runOnce(rc runConfig) error {
 		opts := exporter.Options{
 			VaultRoot: nb.vault,
 			OutDir:    nb.outDir,
+			HubIndexPath: func() string {
+				if len(rc.notebooks) > 1 {
+					return filepath.Join(rc.outRoot, "index.html")
+				}
+				return ""
+			}(),
 			RootNote:  nb.rootNote,
 			MaxDepth:  nb.maxDepth,
 			ThemeMode: nb.theme,
@@ -757,6 +770,12 @@ func runWatch(rc runConfig) error {
 			ExportOptions: exporter.Options{
 				VaultRoot: nb.vault,
 				OutDir:    nb.outDir,
+				HubIndexPath: func() string {
+					if len(rc.notebooks) > 1 {
+						return filepath.Join(rc.outRoot, "index.html")
+					}
+					return ""
+				}(),
 				RootNote:  nb.rootNote,
 				MaxDepth:  nb.maxDepth,
 				ThemeMode: nb.theme,
@@ -787,6 +806,12 @@ func runWatch(rc runConfig) error {
 				ExportOptions: exporter.Options{
 					VaultRoot: n.vault,
 					OutDir:    n.outDir,
+					HubIndexPath: func() string {
+						if len(rc.notebooks) > 1 {
+							return filepath.Join(rc.outRoot, "index.html")
+						}
+						return ""
+					}(),
 					RootNote:  n.rootNote,
 					MaxDepth:  n.maxDepth,
 					ThemeMode: n.theme,
@@ -851,46 +876,24 @@ func writeHubIndex(rc runConfig) error {
 		b.WriteString(`<div class="meta"><h2>` + html.EscapeString(c.Name) + `</h2><p>` + html.EscapeString(c.Vault) + `</p></div></a>`)
 	}
 
-	page := `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>obsidian-polished</title>
-  <style>
-:root{--bg:#f6f3eb;--ink:#1f252e;--muted:#4c5b6c;--card:#fffffff2;--stroke:#c8d0d8;--shadow:0 18px 40px rgba(31,37,46,.12);--accent:#d96f32;--accent2:#2f6f94}
-*{box-sizing:border-box}
-body{margin:0;font-family:"IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;color:var(--ink);background:radial-gradient(circle at 12% 14%,#f4e7ce 0,#f6f3eb 42%,#eef2f5 100%)}
-main{max-width:1100px;margin:0 auto;padding:56px 20px 80px}
-.hero{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;margin-bottom:26px}
-.hero h1{margin:0;font-size:clamp(2rem,4vw,3rem);letter-spacing:-.02em}
-.hero p{margin:.5rem 0 0;color:var(--muted);font-size:1.05rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
-.book{display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid var(--stroke);border-radius:16px;background:var(--card);text-decoration:none;color:inherit;box-shadow:var(--shadow);transform:translateY(0);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
-.book:hover{transform:translateY(-4px);border-color:var(--accent2);box-shadow:0 22px 38px rgba(47,111,148,.22)}
-.book img,.placeholder{width:100%;aspect-ratio:16/10;object-fit:cover;border-radius:12px;border:1px solid #d8dee4;background:linear-gradient(135deg,#fbe0c4,#d9e7f0)}
-.placeholder{display:grid;place-items:center;font-size:2.1rem;font-weight:700;color:#23384a}
-.meta h2{margin:0 0 6px;font-size:1.08rem}
-.meta p{margin:0;color:var(--muted);font-family:"IBM Plex Mono","Menlo",monospace;font-size:.8rem;overflow-wrap:anywhere}
-.tag{font-size:.78rem;color:#65422e;background:#fcefdc;border:1px solid #ebb889;padding:4px 8px;border-radius:999px}
-@media (max-width:700px){main{padding-top:34px}.hero{flex-direction:column;align-items:flex-start}}
-  </style>
-</head>
-<body>
-  <main>
-    <section class="hero">
-      <div>
-        <h1>Notebook Library</h1>
-        <p>Choose an Obsidian notebook export.</p>
-      </div>
-      <div class="tag">obsidian-polished</div>
-    </section>
-    <section class="grid">` + b.String() + `</section>
-  </main>
-</body>
-</html>`
+	if err := writeBrandingAssets(rc.outRoot); err != nil {
+		return err
+	}
 
+	page := strings.ReplaceAll(uiassets.HubHTML(), "{{CARDS}}", b.String())
+	page = strings.ReplaceAll(page, "{{SCRIPT}}", uiassets.HubJS())
 	return os.WriteFile(filepath.Join(rc.outRoot, "index.html"), []byte(page), 0o644)
+}
+
+func writeBrandingAssets(outRoot string) error {
+	brandingDir := filepath.Join(outRoot, "assets", "branding")
+	if err := os.MkdirAll(brandingDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(brandingDir, "logo.png"), uiassets.LogoPNG(), 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(brandingDir, "hub.css"), []byte(uiassets.HubCSS()), 0o644)
 }
 
 func resolveNotebookImage(nb notebookRuntime, outRoot, configDir string) (string, error) {

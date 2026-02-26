@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hlfshell/obsidian-polished/internal/uiassets"
 	"github.com/hlfshell/obsidian-polished/internal/ziputil"
 )
 
@@ -40,6 +41,7 @@ const (
 type Options struct {
 	VaultRoot     string
 	OutDir        string
+	HubIndexPath  string
 	RootNote      string
 	MaxDepth      int
 	ThemeMode     ThemeMode
@@ -326,6 +328,7 @@ func (e *exporter) renderNote(relNote string) error {
   <header>
     <div class="container">
 %s
+%s
     </div>
   </header>
   <main class="container prose">
@@ -335,7 +338,7 @@ func (e *exporter) renderNote(relNote string) error {
   %s
 </body>
 </html>
-`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, meta, rendered, e.themeToggleScript())
+`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.brandLogoHTML(outPath), breadcrumbs, meta, rendered, e.themeToggleScript())
 
 	return os.WriteFile(outPath, []byte(page), 0o644)
 }
@@ -607,6 +610,13 @@ func (e *exporter) copyMedia() error {
 
 func (e *exporter) writeStyle() error {
 	stylePath := filepath.Join(e.outDir, "style.css")
+	brandingDir := filepath.Join(e.outDir, "assets", "branding")
+	if err := os.MkdirAll(brandingDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(brandingDir, "logo.png"), uiassets.LogoPNG(), 0o644); err != nil {
+		return err
+	}
 	if e.opts.CSSPath != "" {
 		data, err := os.ReadFile(e.opts.CSSPath)
 		if err != nil {
@@ -614,7 +624,7 @@ func (e *exporter) writeStyle() error {
 		}
 		return os.WriteFile(stylePath, data, 0o644)
 	}
-	return os.WriteFile(stylePath, []byte(defaultCSS+"\n"), 0o644)
+	return os.WriteFile(stylePath, []byte(uiassets.NoteCSS()+"\n"), 0o644)
 }
 
 func (e *exporter) writeIndex() error {
@@ -739,6 +749,7 @@ func (e *exporter) writeCollectionPage(node *collectionNode, outPath string) err
   <header>
     <div class="container">
 %s
+%s
     </div>
   </header>
   <main class="container landing">
@@ -748,7 +759,7 @@ func (e *exporter) writeCollectionPage(node *collectionNode, outPath string) err
   %s
 </body>
 </html>
-`, html.EscapeString(pageTitle), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, html.EscapeString(pageTitle), cards.String(), e.themeToggleScript())
+`, html.EscapeString(pageTitle), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.brandLogoHTML(outPath), breadcrumbs, html.EscapeString(pageTitle), cards.String(), e.themeToggleScript())
 
 	return os.WriteFile(outPath, []byte(page), 0o644)
 }
@@ -763,8 +774,13 @@ func (e *exporter) collectionIndexPath(relFolder string) string {
 
 func (e *exporter) collectionBreadcrumbHTML(relFolder, outPath string) string {
 	var items []string
+
+	if strings.TrimSpace(e.opts.HubIndexPath) != "" {
+		hubHref := e.relHref(outPath, e.opts.HubIndexPath)
+		items = append(items, fmt.Sprintf(`<a class="crumb" href="%s" title="Notebooks">📚</a>`, hubHref))
+	}
 	homeHref := e.relHref(outPath, filepath.Join(e.outDir, "index.html"))
-	items = append(items, fmt.Sprintf(`<a class="crumb home" href="%s">Home</a>`, homeHref))
+	items = append(items, fmt.Sprintf(`<a class="crumb home" href="%s" title="Home">🏠</a>`, homeHref))
 
 	acc := ""
 	parts := strings.Split(strings.Trim(toSlash(relFolder), "/"), "/")
@@ -785,8 +801,12 @@ func (e *exporter) collectionBreadcrumbHTML(relFolder, outPath string) string {
 
 func (e *exporter) breadcrumbsHTML(relNote, outPath, noteTitle string) string {
 	var items []string
+	if strings.TrimSpace(e.opts.HubIndexPath) != "" {
+		hubHref := e.relHref(outPath, e.opts.HubIndexPath)
+		items = append(items, fmt.Sprintf(`<a class="crumb" href="%s" title="Notebooks">📚</a>`, hubHref))
+	}
 	homeHref := e.relHref(outPath, filepath.Join(e.outDir, "index.html"))
-	items = append(items, fmt.Sprintf(`<a class="crumb home" href="%s">Home</a>`, homeHref))
+	items = append(items, fmt.Sprintf(`<a class="crumb home" href="%s" title="Home">🏠</a>`, homeHref))
 
 	dir := path.Dir(toSlash(relNote))
 	if dir != "." && dir != "" {
@@ -899,6 +919,12 @@ func (e *exporter) themeToggleScript() string {
 <script>(function(){var b=document.getElementById('theme-toggle');if(!b){return;}function icon(){var t=document.documentElement.getAttribute('data-theme');b.textContent=t==='dark'?'☀':'🌙';}icon();b.addEventListener('click',function(){var t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);localStorage.setItem('theme',t);icon();});})();</script>`
 }
 
+func (e *exporter) brandLogoHTML(outPath string) string {
+	href := e.relHref(outPath, filepath.Join(e.outDir, "index.html"))
+	src := e.relHref(outPath, filepath.Join(e.outDir, "assets", "branding", "logo.png"))
+	return fmt.Sprintf(`<a class="brand-mark" href="%s" title="Home"><img src="%s" alt="obsidian-polished logo"></a>`, href, src)
+}
+
 func isExcluded(rel string) bool {
 	parts := strings.Split(rel, "/")
 	for _, p := range parts {
@@ -945,215 +971,3 @@ func copyFile(src, dst string) error {
 	}
 	return out.Close()
 }
-
-const defaultCSS = `:root {
-  --font-sans: "Avenir Next", "Nunito Sans", "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f6f9ff;
-  --bg-2: #eef3ff;
-  --card: #ffffff;
-  --text: #1e2a3f;
-  --muted: #5c6f8f;
-  --border: #d0ddff;
-  --accent: #ff5f43;
-  --accent-2: #0583f2;
-  --code-bg: #f2f6ff;
-  --code-border: #cad8ff;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #071222;
-  --bg-2: #0f1d35;
-  --card: #11253f;
-  --text: #eaf4ff;
-  --muted: #94abd1;
-  --border: #2b4569;
-  --accent: #ff9b45;
-  --accent-2: #3ed2ff;
-  --code-bg: #091628;
-  --code-border: #2d4568;
-}
-
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  font-family: var(--font-sans);
-  background:
-    radial-gradient(circle at 8% 10%, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 38%),
-    radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 34%),
-    linear-gradient(180deg, var(--bg), var(--bg-2));
-  color: var(--text);
-  min-height: 100vh;
-}
-.container { width: min(980px, 92vw); margin: 0 auto; }
-header {
-  position: sticky;
-  top: 0;
-  backdrop-filter: blur(6px);
-  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
-  border-bottom: 1px solid var(--border);
-  z-index: 10;
-}
-header .container {
-  display: flex;
-  gap: .9rem;
-  align-items: center;
-  padding: .8rem 0;
-}
-.breadcrumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .45rem;
-  align-items: center;
-  overflow-wrap: anywhere;
-}
-.crumb {
-  color: var(--muted);
-  text-decoration: none;
-  font-size: .92rem;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: .12rem .45rem;
-}
-.crumb:hover { border-color: var(--border); color: var(--text); }
-.crumb.home { color: var(--accent); font-weight: 700; }
-.crumb.current {
-  color: var(--text);
-  font-weight: 700;
-  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
-}
-.sep { color: var(--muted); font-size: .85rem; }
-.note-meta {
-  margin-bottom: 1.25rem;
-  padding: .75rem .9rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent-2) 8%, var(--card));
-}
-.note-meta h1 {
-  margin: 0 0 .45rem;
-}
-.meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .55rem;
-  color: var(--muted);
-  font-size: .88rem;
-}
-.meta-row span {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: .18rem .58rem;
-}
-main {
-  margin: 1.4rem auto 2.4rem;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 1.2rem 1.4rem;
-  box-shadow: 0 14px 30px rgba(0,0,0,.25);
-}
-.landing { margin-top: 2.4rem; }
-.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: .8rem; }
-.note-card {
-  display: flex;
-  flex-direction: column;
-  gap: .3rem;
-  text-decoration: none;
-  color: var(--text);
-  background: color-mix(in srgb, var(--card) 94%, white);
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  padding: .75rem .85rem;
-}
-.note-card strong { color: var(--accent); }
-.note-card span { color: var(--muted); font-size: .87rem; }
-.folder-card strong { color: var(--accent-2); }
-.prose h1, .prose h2, .prose h3 { line-height: 1.2; margin-top: 1.4em; }
-.prose h1 { margin-top: .2em; }
-.prose p, .prose li { line-height: 1.62; }
-.prose a { color: var(--accent-2); }
-.prose a:hover { color: var(--accent); }
-.prose pre {
-  background: var(--code-bg);
-  border: 1px solid var(--code-border);
-  border-radius: 10px;
-  overflow-x: auto;
-  padding: .8rem;
-}
-.prose code {
-  font-family: var(--font-mono);
-  background: color-mix(in srgb, var(--accent-2) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-2) 24%, transparent);
-  border-radius: 5px;
-  padding: .08rem .24rem;
-}
-.prose pre code { background: transparent; border: 0; padding: 0; }
-.prose blockquote {
-  margin: 1rem 0;
-  padding: .6rem .9rem;
-  border-left: 4px solid var(--accent-2);
-  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
-  border-radius: 8px;
-}
-.prose table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 1rem 0;
-  font-size: .95rem;
-}
-.prose th, .prose td {
-  border: 1px solid var(--border);
-  padding: .45rem .55rem;
-  text-align: left;
-}
-.prose th {
-  background: color-mix(in srgb, var(--accent-2) 12%, var(--card));
-}
-.prose hr {
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 1.2rem 0;
-}
-.prose input[type="checkbox"] {
-  accent-color: var(--accent-2);
-}
-.prose img, .prose video {
-  max-width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  display: block;
-  margin: 0.5rem auto;
-}
-.embed-note, .pdf-embed {
-  background: color-mix(in srgb, var(--accent-2) 10%, var(--card));
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: .65rem .8rem;
-}
-.missing {
-  color: #ff5767;
-  background: color-mix(in srgb, #ff5767 14%, transparent);
-  border: 1px solid color-mix(in srgb, #ff5767 36%, transparent);
-  border-radius: 6px;
-  padding: .1rem .35rem;
-}
-.theme-toggle {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  font-size: 1.1rem;
-  cursor: pointer;
-}
-`

@@ -150,8 +150,8 @@ func TestNoteBreadcrumbIncludesFolders(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(pageBytes)
-	if !strings.Contains(page, `>Home</a>`) {
-		t.Fatalf("breadcrumb missing home link")
+	if !strings.Contains(page, `title="Home">🏠</a>`) {
+		t.Fatalf("breadcrumb missing home icon link")
 	}
 	if !strings.Contains(page, `collections/a/index.html`) {
 		t.Fatalf("breadcrumb missing folder A link")
