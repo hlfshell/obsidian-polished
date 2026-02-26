@@ -164,6 +164,25 @@ func TestNoteBreadcrumbIncludesFolders(t *testing.T) {
 	}
 }
 
+func TestHorizontalRuleRenders(t *testing.T) {
+	vault := t.TempDir()
+	mustWrite(t, filepath.Join(vault, "Rule.md"), "# Rule\n\n---\n\nAfter")
+
+	out := filepath.Join(t.TempDir(), "out")
+	_, err := Run(Options{VaultRoot: vault, OutDir: out, ThemeMode: ThemeBoth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pageBytes, err := os.ReadFile(filepath.Join(out, "notes", "Rule.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pageBytes), "<hr>") {
+		t.Fatalf("expected horizontal rule to render as <hr>")
+	}
+}
+
 func mustWrite(t *testing.T, p, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

@@ -10,6 +10,7 @@ var (
 	mdLinkRE   = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	inlineCode = regexp.MustCompile("`([^`]+)`")
 	strikeRE   = regexp.MustCompile(`~~([^~]+)~~`)
+	hrRE       = regexp.MustCompile(`^([-*_]\s*){3,}$`)
 )
 
 // renderMarkdown implements a small Markdown subset that works for typical notes
@@ -64,6 +65,12 @@ func renderMarkdown(input string) string {
 		if trim == "" {
 			flushParagraph()
 			closeList()
+			continue
+		}
+		if hrRE.MatchString(trim) {
+			flushParagraph()
+			closeList()
+			out.WriteString("<hr>\n")
 			continue
 		}
 

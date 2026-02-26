@@ -721,10 +721,8 @@ func (e *exporter) writeCollectionPage(node *collectionNode, outPath string) err
 	}
 
 	pageTitle := "Vault Home"
-	intro := "Browse folders and notes."
 	if node.relPath != "" {
 		pageTitle = "Folder: " + displayName(node.segment)
-		intro = "Collection view for this folder."
 	}
 	breadcrumbs := e.collectionBreadcrumbHTML(node.relPath, outPath)
 
@@ -745,13 +743,12 @@ func (e *exporter) writeCollectionPage(node *collectionNode, outPath string) err
   </header>
   <main class="container landing">
     <h1>%s</h1>
-    <p>%s</p>
     <section class="card-grid">%s</section>
   </main>
   %s
 </body>
 </html>
-`, html.EscapeString(pageTitle), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, html.EscapeString(pageTitle), html.EscapeString(intro), cards.String(), e.themeToggleScript())
+`, html.EscapeString(pageTitle), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, html.EscapeString(pageTitle), cards.String(), e.themeToggleScript())
 
 	return os.WriteFile(outPath, []byte(page), 0o644)
 }

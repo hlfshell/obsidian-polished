@@ -1,5 +1,6 @@
 # Binaries
 /obshtml
+/polished
 *.exe
 *.test
 
