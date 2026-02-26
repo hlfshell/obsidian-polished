@@ -57,17 +57,6 @@ header .container {
   align-items: center;
   padding: .8rem 0;
 }
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 68px;
-  height: 68px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--card) 90%, transparent);
-}
-.brand-mark img { width: 54px; height: 54px; }
 .breadcrumbs {
   display: flex;
   flex-wrap: wrap;

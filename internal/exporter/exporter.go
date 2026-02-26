@@ -328,7 +328,6 @@ func (e *exporter) renderNote(relNote string) error {
   <header>
     <div class="container">
 %s
-%s
     </div>
   </header>
   <main class="container prose">
@@ -338,7 +337,7 @@ func (e *exporter) renderNote(relNote string) error {
   %s
 </body>
 </html>
-`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.brandLogoHTML(outPath), breadcrumbs, meta, rendered, e.themeToggleScript())
+`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, meta, rendered, e.themeToggleScript())
 
 	return os.WriteFile(outPath, []byte(page), 0o644)
 }
@@ -749,7 +748,6 @@ func (e *exporter) writeCollectionPage(node *collectionNode, outPath string) err
   <header>
     <div class="container">
 %s
-%s
     </div>
   </header>
   <main class="container landing">
@@ -759,7 +757,7 @@ func (e *exporter) writeCollectionPage(node *collectionNode, outPath string) err
   %s
 </body>
 </html>
-`, html.EscapeString(pageTitle), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.brandLogoHTML(outPath), breadcrumbs, html.EscapeString(pageTitle), cards.String(), e.themeToggleScript())
+`, html.EscapeString(pageTitle), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, html.EscapeString(pageTitle), cards.String(), e.themeToggleScript())
 
 	return os.WriteFile(outPath, []byte(page), 0o644)
 }
@@ -917,11 +915,6 @@ func (e *exporter) themeToggleScript() string {
 	}
 	return `<button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme"></button>
 <script>(function(){var b=document.getElementById('theme-toggle');if(!b){return;}function icon(){var t=document.documentElement.getAttribute('data-theme');b.textContent=t==='dark'?'☀':'🌙';}icon();b.addEventListener('click',function(){var t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);localStorage.setItem('theme',t);icon();});})();</script>`
-}
-
-func (e *exporter) brandLogoHTML(outPath string) string {
-	src := e.relHref(outPath, filepath.Join(e.outDir, "assets", "branding", "logo.png"))
-	return fmt.Sprintf(`<span class="brand-mark" aria-hidden="true"><img src="%s" alt="obsidian-polished logo"></span>`, src)
 }
 
 func isExcluded(rel string) bool {

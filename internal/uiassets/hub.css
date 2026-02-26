@@ -52,7 +52,7 @@ main { margin: 2.2rem auto 2.4rem; }
 }
 
 .hero-logo {
-  width: min(620px, 86vw);
+  width: min(465px, 86vw);
   height: auto;
   display: block;
   filter: drop-shadow(0 18px 32px rgba(0,0,0,.28));
