@@ -512,7 +512,7 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 		if len(fo.vaults) == 1 {
 			vault = fo.vaults[0]
 		}
-		if vault == "" {
+		if vault == "" && nb.GitRepo == "" {
 			vault = "."
 		}
 
