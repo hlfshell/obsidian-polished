@@ -24,6 +24,8 @@ type Options struct {
 	GitPullInterval time.Duration
 	GitBranch       string
 	GitRemote       string
+	NotebookName    string
+	AfterExport     func(notebook string, res exporter.Result)
 }
 
 type fileState struct {
@@ -64,6 +66,9 @@ func Run(opts Options) error {
 	fmt.Printf("Initial export complete: %s\n", res.OutputDir)
 	fmt.Printf("Notes exported: %d\n", res.NotesExported)
 	fmt.Printf("Assets copied: %d\n", res.AssetsCopied)
+	if opts.AfterExport != nil {
+		opts.AfterExport(opts.NotebookName, res)
+	}
 
 	if opts.EnableGitPull {
 		if gitIsRepo(opts.ExportOptions.VaultRoot) {
@@ -131,11 +136,14 @@ func Run(opts Options) error {
 			if changed {
 				fmt.Println("Git sync pulled new commit; running full export")
 				generationMu.Lock()
-				_, err := exporter.Run(opts.ExportOptions)
+				res, err := exporter.Run(opts.ExportOptions)
 				generationMu.Unlock()
 				if err != nil {
 					fmt.Printf("export failed: %v\n", err)
 					continue
+				}
+				if opts.AfterExport != nil {
+					opts.AfterExport(opts.NotebookName, res)
 				}
 				next, err := scanFiles(opts.ExportOptions.VaultRoot, opts.ExportOptions.OutDir)
 				if err == nil {
@@ -147,10 +155,14 @@ func Run(opts Options) error {
 				batch := pending
 				pending = map[string]changeEvent{}
 				generationMu.Lock()
-				err := processBatch(opts.ExportOptions, batch)
+				res, err := processBatch(opts.ExportOptions, batch)
 				generationMu.Unlock()
 				if err != nil {
 					fmt.Printf("watch export failed: %v\n", err)
+					continue
+				}
+				if opts.AfterExport != nil {
+					opts.AfterExport(opts.NotebookName, res)
 				}
 			}
 			time.Sleep(80 * time.Millisecond)
@@ -158,7 +170,7 @@ func Run(opts Options) error {
 	}
 }
 
-func processBatch(base exporter.Options, batch map[string]changeEvent) error {
+func processBatch(base exporter.Options, batch map[string]changeEvent) (exporter.Result, error) {
 	paths := make([]string, 0, len(batch))
 	for p := range batch {
 		paths = append(paths, p)
@@ -182,8 +194,8 @@ func processBatch(base exporter.Options, batch map[string]changeEvent) error {
 	}
 
 	if full {
-		_, err := exporter.Run(base)
-		return err
+		res, err := exporter.Run(base)
+		return res, err
 	}
 
 	for _, rel := range paths {
@@ -192,22 +204,28 @@ func processBatch(base exporter.Options, batch map[string]changeEvent) error {
 			continue
 		}
 		if err := syncAsset(base.VaultRoot, base.OutDir, rel, ev.typ); err != nil {
-			return err
+			return exporter.Result{}, err
 		}
 	}
 
+	var lastRes exporter.Result
 	for _, root := range changedRoots {
 		opts := base
 		opts.RootNote = root
 		opts.MaxDepth = -1
 		opts.Incremental = true
 		opts.IndexAllNotes = true
-		if _, err := exporter.Run(opts); err != nil {
-			return err
+		res, err := exporter.Run(opts)
+		if err != nil {
+			return exporter.Result{}, err
 		}
+		lastRes = res
 	}
 
-	return nil
+	if len(changedRoots) == 0 {
+		lastRes = exporter.Result{OutputDir: base.OutDir}
+	}
+	return lastRes, nil
 }
 
 func syncAsset(vaultRoot, outDir, rel string, ev eventType) error {

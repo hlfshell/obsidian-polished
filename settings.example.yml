@@ -1,0 +1,43 @@
+# obsidian-polished settings example
+# Run with:
+#   ./obsidian-polished settings.example.yml
+
+# Top-level output directory for generated HTML.
+out: ./site
+
+# Optional cache directory for cloned git notebooks.
+# Default is <out>/.repos
+cache_dir: ./site/.repos
+
+# Global runtime defaults (can be overridden per notebook).
+watch: true
+watch_poll: 2s
+watch_debounce: 1s
+theme: both
+watch_git_pull: true
+git_pull_interval: 5m
+git_remote: origin
+
+notebooks:
+  # Local vault notebook example
+  - name: Personal Vault
+    vault: /absolute/path/to/obsidian/personal-vault
+    root_note: Home.md
+    image: ./images/personal-cover.jpg
+    theme: both
+
+  # Git-backed notebook example
+  # If `vault` is omitted, repo is cloned to <cache_dir>/<name-slug>.
+  # If `root_note` is omitted, all notes are exported.
+  - name: Team Notes
+    git_repo: git@github.com:your-org/team-notes.git
+    git_branch: main
+    image: ./images/team-cover.jpg
+
+  # Another git-backed notebook with explicit clone location
+  - name: Product Docs
+    git_repo: git@github.com:your-org/product-docs.git
+    vault: ./repos/product-docs
+    git_branch: main
+    root_note: Docs Home.md
+    image: ./images/docs-cover.jpg

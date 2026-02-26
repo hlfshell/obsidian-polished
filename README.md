@@ -1,18 +1,13 @@
 # obsidian-polished
 
-`obsidian-polished` is a standalone Go CLI that exports Obsidian markdown notes into a portable static HTML site.
+`obsidian-polished` exports Obsidian vaults into portable static HTML.
 
-## What It Does
-
-- Exports either:
-  - all notes in a vault, or
-  - a root note plus linked notes (recursive traversal)
-- Preserves wiki links and embedded media in static HTML output.
-- Adds note metadata cards on each page with created/updated timestamps.
-- Supports `light`, `dark`, or toggleable `both` theme modes.
-- Includes watch mode with debounced regeneration and generation locking.
-- Optionally syncs a git-backed vault on a schedule (`fetch + hard reset + clean`).
-- Can run in Docker and optionally serve static output via nginx with optional basic auth.
+It supports:
+- single-vault local export
+- watch mode
+- multi-notebook hosting from a `settings.yml`
+- per-notebook git repos with periodic pull/reset/clean sync
+- a hub `index.html` that links to each notebook
 
 ## Build
 
@@ -20,9 +15,11 @@
 go build -o obsidian-polished ./cmd/obsidian-polished
 ```
 
-## CLI Usage
+## CLI
 
-Basic export:
+No arguments now shows help (same as `-h` / `--help`).
+
+Single notebook:
 
 ```bash
 ./obsidian-polished \
@@ -30,25 +27,7 @@ Basic export:
   --out /tmp/export
 ```
 
-Export from a single root note:
-
-```bash
-./obsidian-polished \
-  --vault /path/to/vault \
-  --root-note "Home.md" \
-  --out /tmp/export
-```
-
-Watch mode:
-
-```bash
-./obsidian-polished \
-  --vault /path/to/vault \
-  --out /tmp/export \
-  --watch
-```
-
-Watch mode with git sync every 5 minutes:
+Watch with git pull:
 
 ```bash
 ./obsidian-polished \
@@ -56,82 +35,66 @@ Watch mode with git sync every 5 minutes:
   --out /tmp/export \
   --watch \
   --watch-git-pull \
-  --watch-git-pull-interval 5m \
-  --watch-git-branch main
+  --watch-git-pull-interval 5m
 ```
+
+## Settings File
+
+Run with config:
+
+```bash
+./obsidian-polished settings.yml
+```
+
+Or:
+
+```bash
+./obsidian-polished --config settings.yml
+```
+
+Flags override settings values.
+
+Example `settings.yml`:
+
+```yaml
+out: ./site
+watch: true
+watch_poll: 2s
+watch_debounce: 1s
+theme: both
+
+notebooks:
+  - name: Team Notes
+    git_repo: git@github.com:org/team-notes.git
+    git_branch: main
+    image: ./images/team-cover.jpg
+    root_note: Home.md
+
+  - name: Personal Vault
+    vault: /Users/you/Obsidian/Personal
+    image: ./images/personal.jpg
+```
+
+Notebook metadata (`name`, `image`) is shown on the hub `index.html`.
+
+If a notebook has `git_repo` and no `vault`, `obsidian-polished` clones it locally into `<out>/.repos/<slug>` and watches from there.
+If `root_note` is omitted, that notebook exports from the vault root (all notes).
 
 ## Important Flags
 
-- `--vault` Vault root (default `.`)
-- `--root-note` Root note filename/path (optional)
-- `--out` Output directory (default `./html_export`)
-- `--max-depth` Traversal depth from root (`-1` unlimited)
-- `--theme` `both|light|dark` (default `both`)
-- `--css` Optional CSS override file
-- `--zip` Emit zip archive instead of folder
-- `--zip-path` Zip destination path (default `<out>.zip`)
-- `--watch` Run continuously and regenerate on changes
-- `--watch-poll` Watch polling interval (default `2s`)
-- `--watch-debounce` Debounce window (default `1s`)
-- `--watch-git-pull` Enable periodic git sync for git repos
-- `--watch-git-pull-interval` Git sync interval (default `5m`)
-- `--watch-git-branch` Force sync branch (default auto `main` then `master`)
-- `--watch-git-remote` Remote name (default `origin`)
-
-## Docker
-
-Build image:
-
-```bash
-docker build -t obsidian-polished:latest .
-```
-
-Run exporter loop:
-
-```bash
-docker run --rm \
-  -v /path/to/vault:/data/vault \
-  -v /path/to/output:/data/out \
-  -e OBS_WATCH=true \
-  obsidian-polished:latest
-```
-
-Run with nginx static serving:
-
-```bash
-docker run --rm -p 8080:8080 \
-  -v /path/to/vault:/data/vault \
-  -v /path/to/output:/data/out \
-  -e OBS_SERVE_STATIC=true \
-  obsidian-polished:latest
-```
-
-Enable basic auth:
-
-```bash
-docker run --rm -p 8080:8080 \
-  -v /path/to/vault:/data/vault \
-  -v /path/to/output:/data/out \
-  -e OBS_SERVE_STATIC=true \
-  -e OBS_AUTH_ENABLED=true \
-  -e OBS_AUTH_USER=notes \
-  -e OBS_AUTH_PASSWORD='strong-password' \
-  obsidian-polished:latest
-```
-
-## Docker Compose
-
-Start:
-
-```bash
-docker compose up -d --build
-```
-
-Use the included `docker-compose.yml` and adjust:
-
-- `./vault` and `./output` volume paths
-- `OBS_GIT_SYNC`/branch/interval settings
-- `OBS_AUTH_*` values when enabling auth
+- `--vault` vault root (single notebook mode)
+- `--root-note` root note (omit to export all notes)
+- `--out` output directory
+- `--watch` run continuous watch mode
+- `--watch-poll` watch polling interval
+- `--watch-debounce` debounce window
+- `--watch-git-pull` enable periodic git sync
+- `--watch-git-pull-interval` git sync interval
+- `--watch-git-branch` sync branch (`main`/`master` auto when empty)
+- `--watch-git-remote` remote name (default `origin`)
+- `--theme` `both|light|dark`
+- `--css` custom stylesheet for notebook pages
+- `--zip` / `--zip-path` zip output (single notebook only)
 
 ## Test
 
