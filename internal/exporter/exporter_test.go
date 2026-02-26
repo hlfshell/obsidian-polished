@@ -1,0 +1,116 @@
+package exporter
+
+import (
+	"archive/zip"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestParseLinkSpec(t *testing.T) {
+	target, alias, anchor := parseLinkSpec("Note Name|Alias")
+	if target != "Note Name" || alias != "Alias" || anchor != "" {
+		t.Fatalf("unexpected parse: %q %q %q", target, alias, anchor)
+	}
+	target, alias, anchor = parseLinkSpec("Note#Section")
+	if target != "Note" || alias != "" || anchor != "Section" {
+		t.Fatalf("unexpected parse: %q %q %q", target, alias, anchor)
+	}
+}
+
+func TestMaxDepthStopsTraversal(t *testing.T) {
+	vault := t.TempDir()
+	mustWrite(t, filepath.Join(vault, "A.md"), "# A\n[[B]]")
+	mustWrite(t, filepath.Join(vault, "B.md"), "# B\n[[C]]")
+	mustWrite(t, filepath.Join(vault, "C.md"), "# C")
+
+	out := filepath.Join(t.TempDir(), "out")
+	res, err := Run(Options{VaultRoot: vault, OutDir: out, RootNote: "A.md", MaxDepth: 1, ThemeMode: ThemeBoth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.NotesExported != 2 {
+		t.Fatalf("expected 2 notes, got %d", res.NotesExported)
+	}
+	if _, err := os.Stat(filepath.Join(out, "notes", "A.html")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "notes", "B.html")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "notes", "C.html")); !os.IsNotExist(err) {
+		t.Fatalf("expected C.html not to exist")
+	}
+}
+
+func TestNoRootGeneratesLandingForAllNotes(t *testing.T) {
+	vault := t.TempDir()
+	mustWrite(t, filepath.Join(vault, "Alpha.md"), "# Alpha")
+	mustWrite(t, filepath.Join(vault, "folder", "Beta.md"), "# Beta")
+
+	out := filepath.Join(t.TempDir(), "out")
+	_, err := Run(Options{VaultRoot: vault, OutDir: out, ThemeMode: ThemeBoth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexBytes, err := os.ReadFile(filepath.Join(out, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := string(indexBytes)
+	if !strings.Contains(index, "Alpha") || !strings.Contains(index, "Beta") {
+		t.Fatalf("index missing notes: %s", index)
+	}
+	if !strings.Contains(index, "theme-toggle") {
+		t.Fatalf("index missing theme toggle")
+	}
+}
+
+func TestZipOutput(t *testing.T) {
+	vault := t.TempDir()
+	mustWrite(t, filepath.Join(vault, "Root.md"), "# Root")
+
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "export-dir")
+	zipPath := filepath.Join(tmp, "bundle.zip")
+	res, err := Run(Options{VaultRoot: vault, OutDir: out, RootNote: "Root.md", Zip: true, ZipPath: zipPath, ThemeMode: ThemeLight})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ZipPath == "" {
+		t.Fatalf("expected zip path to be set")
+	}
+	if _, err := os.Stat(zipPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("expected output dir to be removed after zip")
+	}
+
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	foundIndex := false
+	for _, f := range zr.File {
+		if f.Name == "index.html" {
+			foundIndex = true
+			break
+		}
+	}
+	if !foundIndex {
+		t.Fatalf("zip missing index.html")
+	}
+}
+
+func mustWrite(t *testing.T, p, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

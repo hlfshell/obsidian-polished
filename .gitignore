@@ -1,0 +1,15 @@
+# Binaries
+obshtml
+*.exe
+*.test
+
+# Build outputs
+html_export/
+dist/
+
+# Archives
+*.zip
+
+# Go
+bin/
+coverage.out

@@ -1,0 +1,821 @@
+package exporter
+
+import (
+	"fmt"
+	"html"
+	"io"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/keith/obsidian-html-sharer/internal/ziputil"
+)
+
+var (
+	wikiLinkRE = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
+	embedRE    = regexp.MustCompile(`!\[\[([^\]]+)\]\]`)
+	mdImageRE  = regexp.MustCompile(`(!\[[^\]]*\]\()([^)]+)(\))`)
+	mdLinkRE2  = regexp.MustCompile(`(\[[^\]]*\]\()([^)]+)(\))`)
+)
+
+var (
+	videoExts = map[string]bool{".mp4": true, ".webm": true, ".mov": true, ".m4v": true}
+	imageExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".svg": true, ".bmp": true, ".tiff": true, ".ico": true}
+)
+
+type ThemeMode string
+
+const (
+	ThemeBoth  ThemeMode = "both"
+	ThemeLight ThemeMode = "light"
+	ThemeDark  ThemeMode = "dark"
+)
+
+type Options struct {
+	VaultRoot string
+	OutDir    string
+	RootNote  string
+	MaxDepth  int
+	ThemeMode ThemeMode
+	CSSPath   string
+	Zip       bool
+	ZipPath   string
+}
+
+type Result struct {
+	OutputDir     string
+	ZipPath       string
+	NotesExported int
+	AssetsCopied  int
+}
+
+type exporter struct {
+	vaultRoot string
+	outDir    string
+	notesOut  string
+	assetsOut string
+	opts      Options
+
+	mdFiles     []string
+	byStem      map[string][]string
+	fileByName  map[string][]string
+	noteSeen    map[string]bool
+	mediaNeeded map[string]bool
+	noteDepth   map[string]int
+	queue       []string
+}
+
+func Run(opts Options) (Result, error) {
+	if opts.ThemeMode == "" {
+		opts.ThemeMode = ThemeBoth
+	}
+	if opts.MaxDepth < -1 {
+		return Result{}, fmt.Errorf("max-depth must be -1 or greater")
+	}
+	if opts.ThemeMode != ThemeBoth && opts.ThemeMode != ThemeLight && opts.ThemeMode != ThemeDark {
+		return Result{}, fmt.Errorf("invalid theme mode: %s", opts.ThemeMode)
+	}
+
+	vaultRoot, err := filepath.Abs(opts.VaultRoot)
+	if err != nil {
+		return Result{}, err
+	}
+	outDir, err := filepath.Abs(opts.OutDir)
+	if err != nil {
+		return Result{}, err
+	}
+
+	e := &exporter{
+		vaultRoot:   vaultRoot,
+		outDir:      outDir,
+		notesOut:    filepath.Join(outDir, "notes"),
+		assetsOut:   filepath.Join(outDir, "assets"),
+		opts:        opts,
+		byStem:      map[string][]string{},
+		fileByName:  map[string][]string{},
+		noteSeen:    map[string]bool{},
+		mediaNeeded: map[string]bool{},
+		noteDepth:   map[string]int{},
+	}
+	if err := e.scanVault(); err != nil {
+		return Result{}, err
+	}
+	if err := e.prepareOutput(); err != nil {
+		return Result{}, err
+	}
+
+	if err := e.seedQueue(); err != nil {
+		return Result{}, err
+	}
+	if err := e.processQueue(); err != nil {
+		return Result{}, err
+	}
+	if err := e.copyMedia(); err != nil {
+		return Result{}, err
+	}
+	if err := e.writeStyle(); err != nil {
+		return Result{}, err
+	}
+	if err := e.writeIndex(); err != nil {
+		return Result{}, err
+	}
+
+	res := Result{
+		OutputDir:     outDir,
+		NotesExported: len(e.noteSeen),
+		AssetsCopied:  len(e.mediaNeeded),
+	}
+
+	if opts.Zip {
+		zipPath := opts.ZipPath
+		if zipPath == "" {
+			zipPath = outDir + ".zip"
+		}
+		zipPath, err = filepath.Abs(zipPath)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := ziputil.CreateFromDir(outDir, zipPath); err != nil {
+			return Result{}, err
+		}
+		if err := os.RemoveAll(outDir); err != nil {
+			return Result{}, err
+		}
+		res.ZipPath = zipPath
+	}
+
+	return res, nil
+}
+
+func (e *exporter) scanVault() error {
+	return filepath.WalkDir(e.vaultRoot, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(e.vaultRoot, p)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		relSlash := toSlash(rel)
+		if isExcluded(relSlash) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		e.fileByName[strings.ToLower(filepath.Base(relSlash))] = append(e.fileByName[strings.ToLower(filepath.Base(relSlash))], relSlash)
+
+		if strings.EqualFold(filepath.Ext(relSlash), ".md") {
+			e.mdFiles = append(e.mdFiles, relSlash)
+			e.byStem[strings.ToLower(strings.TrimSuffix(filepath.Base(relSlash), filepath.Ext(relSlash)))] = append(e.byStem[strings.ToLower(strings.TrimSuffix(filepath.Base(relSlash), filepath.Ext(relSlash)))], relSlash)
+		}
+		return nil
+	})
+}
+
+func (e *exporter) prepareOutput() error {
+	if err := os.RemoveAll(e.outDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(e.notesOut, 0o755); err != nil {
+		return err
+	}
+	return os.MkdirAll(e.assetsOut, 0o755)
+}
+
+func (e *exporter) seedQueue() error {
+	if e.opts.RootNote == "" {
+		sorted := append([]string(nil), e.mdFiles...)
+		sort.Strings(sorted)
+		for _, note := range sorted {
+			e.enqueue(note, 0)
+		}
+		return nil
+	}
+
+	root := e.opts.RootNote
+	if filepath.Ext(root) == "" {
+		root += ".md"
+	}
+	root = toSlash(root)
+	if strings.HasPrefix(root, "/") {
+		rel, err := filepath.Rel(e.vaultRoot, root)
+		if err != nil {
+			return err
+		}
+		root = toSlash(rel)
+	}
+
+	resolved := e.resolveNote(root, root)
+	if resolved == "" {
+		return fmt.Errorf("root note not found: %s", e.opts.RootNote)
+	}
+	e.enqueue(resolved, 0)
+	return nil
+}
+
+func (e *exporter) processQueue() error {
+	for len(e.queue) > 0 {
+		note := e.queue[0]
+		e.queue = e.queue[1:]
+		if err := e.renderNote(note); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *exporter) enqueue(note string, depth int) {
+	if e.noteSeen[note] {
+		return
+	}
+	e.noteSeen[note] = true
+	e.noteDepth[note] = depth
+	e.queue = append(e.queue, note)
+}
+
+func (e *exporter) canFollow(current string) bool {
+	if e.opts.MaxDepth < 0 {
+		return true
+	}
+	return e.noteDepth[current] < e.opts.MaxDepth
+}
+
+func (e *exporter) renderNote(relNote string) error {
+	raw, err := os.ReadFile(filepath.Join(e.vaultRoot, filepath.FromSlash(relNote)))
+	if err != nil {
+		return err
+	}
+	processed := e.processMarkdown(string(raw), relNote)
+	rendered := renderMarkdown(processed)
+
+	outPath := e.noteHTMLPath(relNote)
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return err
+	}
+
+	title := strings.TrimSuffix(filepath.Base(relNote), filepath.Ext(relNote))
+	page := fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>%s</title>
+  %s
+  <link rel="stylesheet" href="%s">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <a class="home" href="%s">Home</a>
+      <span class="path">%s</span>
+    </div>
+  </header>
+  <main class="container prose">
+%s
+  </main>
+  %s
+</body>
+</html>
+`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.relHref(outPath, filepath.Join(e.outDir, "index.html")), html.EscapeString(relNote), rendered, e.themeToggleScript())
+
+	return os.WriteFile(outPath, []byte(page), 0o644)
+}
+
+func (e *exporter) processMarkdown(raw, current string) string {
+	text := embedRE.ReplaceAllStringFunc(raw, func(m string) string {
+		parts := embedRE.FindStringSubmatch(m)
+		if len(parts) < 2 {
+			return m
+		}
+		target, alias, _ := parseLinkSpec(parts[1])
+		note := e.resolveNote(target, current)
+		if note != "" {
+			if e.canFollow(current) {
+				e.enqueue(note, e.noteDepth[current]+1)
+			}
+			label := alias
+			if label == "" {
+				label = strings.TrimSuffix(filepath.Base(note), filepath.Ext(note))
+			}
+			href := e.relHref(e.noteHTMLPath(current), e.noteHTMLPath(note))
+			return fmt.Sprintf(`<div class="embed-note">Embedded note: <a href="%s">%s</a></div>`, href, html.EscapeString(label))
+		}
+		asset := e.resolveAsset(target, current)
+		if asset == "" {
+			return fmt.Sprintf(`<span class="missing">[Missing embed: %s]</span>`, html.EscapeString(parts[1]))
+		}
+		e.mediaNeeded[asset] = true
+		ext := strings.ToLower(filepath.Ext(asset))
+		href := e.relHref(e.noteHTMLPath(current), e.assetOutPath(asset))
+		label := alias
+		if label == "" {
+			label = filepath.Base(asset)
+		}
+		if imageExts[ext] {
+			return fmt.Sprintf(`<figure><img src="%s" alt="%s" loading="lazy"></figure>`, href, html.EscapeString(label))
+		}
+		if videoExts[ext] {
+			return fmt.Sprintf(`<figure><video controls preload="metadata"><source src="%s"></video><figcaption>%s</figcaption></figure>`, href, html.EscapeString(label))
+		}
+		if ext == ".pdf" {
+			return fmt.Sprintf(`<div class="pdf-embed"><a href="%s" target="_blank" rel="noopener">Open PDF: %s</a></div>`, href, html.EscapeString(label))
+		}
+		return fmt.Sprintf(`<a href="%s">%s</a>`, href, html.EscapeString(label))
+	})
+
+	text = wikiLinkRE.ReplaceAllStringFunc(text, func(m string) string {
+		parts := wikiLinkRE.FindStringSubmatch(m)
+		if len(parts) < 2 {
+			return m
+		}
+		target, alias, anchor := parseLinkSpec(parts[1])
+		note := e.resolveNote(target, current)
+		if note != "" {
+			if e.canFollow(current) {
+				e.enqueue(note, e.noteDepth[current]+1)
+			}
+			href := e.relHref(e.noteHTMLPath(current), e.noteHTMLPath(note))
+			if anchor != "" {
+				href += "#" + anchorSlug(anchor)
+			}
+			label := alias
+			if label == "" {
+				if anchor != "" {
+					label = anchor
+				} else {
+					label = strings.TrimSuffix(filepath.Base(note), filepath.Ext(note))
+				}
+			}
+			return fmt.Sprintf("[%s](%s)", label, href)
+		}
+
+		asset := e.resolveAsset(target, current)
+		if asset != "" {
+			e.mediaNeeded[asset] = true
+			href := e.relHref(e.noteHTMLPath(current), e.assetOutPath(asset))
+			label := alias
+			if label == "" {
+				label = filepath.Base(asset)
+			}
+			return fmt.Sprintf("[%s](%s)", label, href)
+		}
+
+		return fmt.Sprintf("`[[%s]]`", parts[1])
+	})
+
+	rewrite := func(urlText string, current string) string {
+		clean := strings.Fields(strings.TrimSpace(urlText))
+		if len(clean) == 0 {
+			return urlText
+		}
+		target := clean[0]
+		if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "mailto:") {
+			return urlText
+		}
+		asset := e.resolveAsset(target, current)
+		if asset == "" {
+			return urlText
+		}
+		e.mediaNeeded[asset] = true
+		return e.relHref(e.noteHTMLPath(current), e.assetOutPath(asset))
+	}
+
+	text = mdImageRE.ReplaceAllStringFunc(text, func(m string) string {
+		p := mdImageRE.FindStringSubmatch(m)
+		if len(p) != 4 {
+			return m
+		}
+		return p[1] + rewrite(p[2], current) + p[3]
+	})
+	text = mdLinkRE2.ReplaceAllStringFunc(text, func(m string) string {
+		p := mdLinkRE2.FindStringSubmatch(m)
+		if len(p) != 4 {
+			return m
+		}
+		return p[1] + rewrite(p[2], current) + p[3]
+	})
+
+	return text
+}
+
+func parseLinkSpec(spec string) (target, alias, anchor string) {
+	main := strings.TrimSpace(spec)
+	if pipe := strings.Index(main, "|"); pipe >= 0 {
+		alias = strings.TrimSpace(main[pipe+1:])
+		main = strings.TrimSpace(main[:pipe])
+	}
+	if hash := strings.Index(main, "#"); hash >= 0 {
+		anchor = strings.TrimSpace(main[hash+1:])
+		main = strings.TrimSpace(main[:hash])
+	}
+	return main, alias, anchor
+}
+
+func (e *exporter) resolveNote(target, current string) string {
+	if strings.TrimSpace(target) == "" {
+		return ""
+	}
+	target = toSlash(target)
+	currentDir := path.Dir(toSlash(current))
+	if currentDir == "." {
+		currentDir = ""
+	}
+
+	candidates := make([]string, 0, 4)
+	explicit := path.Clean(path.Join(currentDir, target))
+	if !strings.HasSuffix(strings.ToLower(explicit), ".md") {
+		candidates = append(candidates, explicit+".md")
+	}
+	candidates = append(candidates, explicit)
+
+	rootExplicit := path.Clean(target)
+	if !strings.HasSuffix(strings.ToLower(rootExplicit), ".md") {
+		candidates = append(candidates, rootExplicit+".md")
+	}
+	candidates = append(candidates, rootExplicit)
+
+	for _, c := range candidates {
+		if contains(e.mdFiles, c) {
+			return c
+		}
+	}
+
+	stem := strings.ToLower(strings.TrimSuffix(path.Base(target), path.Ext(target)))
+	matches := e.byStem[stem]
+	if len(matches) == 0 {
+		return ""
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	for _, m := range matches {
+		if path.Dir(m) == currentDir {
+			return m
+		}
+	}
+	return matches[0]
+}
+
+func (e *exporter) resolveAsset(target, current string) string {
+	if strings.TrimSpace(target) == "" {
+		return ""
+	}
+	target = toSlash(target)
+	currentDir := path.Dir(toSlash(current))
+	if currentDir == "." {
+		currentDir = ""
+	}
+	candidates := []string{path.Clean(path.Join(currentDir, target)), path.Clean(target)}
+	for _, c := range candidates {
+		if fileExists(filepath.Join(e.vaultRoot, filepath.FromSlash(c))) {
+			return c
+		}
+	}
+
+	name := strings.ToLower(path.Base(target))
+	matches := e.fileByName[name]
+	if len(matches) == 0 {
+		return ""
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	for _, m := range matches {
+		if strings.HasPrefix(m, "assets/") {
+			return m
+		}
+	}
+	return matches[0]
+}
+
+func (e *exporter) noteHTMLPath(relNote string) string {
+	base := strings.TrimSuffix(relNote, filepath.Ext(relNote)) + ".html"
+	return filepath.Join(e.notesOut, filepath.FromSlash(base))
+}
+
+func (e *exporter) assetOutPath(relAsset string) string {
+	return filepath.Join(e.assetsOut, filepath.FromSlash(relAsset))
+}
+
+func (e *exporter) relHref(fromPath, toPath string) string {
+	rel, err := filepath.Rel(filepath.Dir(fromPath), toPath)
+	if err != nil {
+		return "#"
+	}
+	parts := strings.Split(toSlash(rel), "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	return strings.Join(parts, "/")
+}
+
+func anchorSlug(text string) string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range text {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func (e *exporter) copyMedia() error {
+	assets := make([]string, 0, len(e.mediaNeeded))
+	for a := range e.mediaNeeded {
+		assets = append(assets, a)
+	}
+	sort.Strings(assets)
+	for _, rel := range assets {
+		src := filepath.Join(e.vaultRoot, filepath.FromSlash(rel))
+		dst := e.assetOutPath(rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := copyFile(src, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *exporter) writeStyle() error {
+	stylePath := filepath.Join(e.outDir, "style.css")
+	if e.opts.CSSPath != "" {
+		data, err := os.ReadFile(e.opts.CSSPath)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(stylePath, data, 0o644)
+	}
+	return os.WriteFile(stylePath, []byte(defaultCSS+"\n"), 0o644)
+}
+
+func (e *exporter) writeIndex() error {
+	indexPath := filepath.Join(e.outDir, "index.html")
+	notes := make([]string, 0, len(e.noteSeen))
+	for n := range e.noteSeen {
+		notes = append(notes, n)
+	}
+	sort.Strings(notes)
+
+	var cards strings.Builder
+	for _, n := range notes {
+		title := strings.TrimSuffix(filepath.Base(n), filepath.Ext(n))
+		href := e.relHref(indexPath, e.noteHTMLPath(n))
+		cards.WriteString(fmt.Sprintf(`<a class="note-card" href="%s"><strong>%s</strong><span>%s</span></a>`, href, html.EscapeString(title), html.EscapeString(n)))
+	}
+
+	header := "Vault Export"
+	intro := "Browse exported notes."
+	if e.opts.RootNote != "" {
+		header = "Note Export"
+		intro = "Root note plus linked notes based on traversal settings."
+	}
+
+	page := fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>%s</title>
+  %s
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container landing">
+    <h1>%s</h1>
+    <p>%s</p>
+    <section class="card-grid">%s</section>
+  </main>
+  %s
+</body>
+</html>
+`, html.EscapeString(header), e.themeInitScript(), html.EscapeString(header), html.EscapeString(intro), cards.String(), e.themeToggleScript())
+
+	return os.WriteFile(indexPath, []byte(page), 0o644)
+}
+
+func (e *exporter) themeInitScript() string {
+	mode := string(e.opts.ThemeMode)
+	if mode == "" {
+		mode = string(ThemeBoth)
+	}
+	if mode == string(ThemeBoth) {
+		return `<script>(function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);})();</script>`
+	}
+	return fmt.Sprintf(`<script>document.documentElement.setAttribute('data-theme','%s');</script>`, html.EscapeString(mode))
+}
+
+func (e *exporter) themeToggleScript() string {
+	if e.opts.ThemeMode != ThemeBoth {
+		return ""
+	}
+	return `<button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme"></button>
+<script>(function(){var b=document.getElementById('theme-toggle');if(!b){return;}function icon(){var t=document.documentElement.getAttribute('data-theme');b.textContent=t==='dark'?'☀':'🌙';}icon();b.addEventListener('click',function(){var t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);localStorage.setItem('theme',t);icon();});})();</script>`
+}
+
+func isExcluded(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for _, p := range parts {
+		if p == ".git" || p == ".obsidian" || p == "tmp" {
+			return true
+		}
+	}
+	return false
+}
+
+func toSlash(p string) string {
+	return strings.ReplaceAll(filepath.Clean(p), "\\", "/")
+}
+
+func contains(items []string, v string) bool {
+	for _, i := range items {
+		if i == v {
+			return true
+		}
+	}
+	return false
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
+}
+
+const defaultCSS = `:root {
+  --font-sans: "Avenir Next", "Nunito Sans", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f9ff;
+  --bg-2: #eef3ff;
+  --card: #ffffff;
+  --text: #1e2a3f;
+  --muted: #5c6f8f;
+  --border: #d0ddff;
+  --accent: #ff5f43;
+  --accent-2: #0583f2;
+  --code-bg: #f2f6ff;
+  --code-border: #cad8ff;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #071222;
+  --bg-2: #0f1d35;
+  --card: #11253f;
+  --text: #eaf4ff;
+  --muted: #94abd1;
+  --border: #2b4569;
+  --accent: #ff9b45;
+  --accent-2: #3ed2ff;
+  --code-bg: #091628;
+  --code-border: #2d4568;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(circle at 8% 10%, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 38%),
+    radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 34%),
+    linear-gradient(180deg, var(--bg), var(--bg-2));
+  color: var(--text);
+  min-height: 100vh;
+}
+.container { width: min(980px, 92vw); margin: 0 auto; }
+header {
+  position: sticky;
+  top: 0;
+  backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+header .container {
+  display: flex;
+  gap: .9rem;
+  align-items: center;
+  padding: .8rem 0;
+}
+.home { color: var(--accent); text-decoration: none; font-weight: 700; }
+.path { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+main {
+  margin: 1.4rem auto 2.4rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.2rem 1.4rem;
+  box-shadow: 0 14px 30px rgba(0,0,0,.25);
+}
+.landing { margin-top: 2.4rem; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: .8rem; }
+.note-card {
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  text-decoration: none;
+  color: var(--text);
+  background: color-mix(in srgb, var(--card) 94%, white);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: .75rem .85rem;
+}
+.note-card strong { color: var(--accent); }
+.note-card span { color: var(--muted); font-size: .87rem; }
+.prose h1, .prose h2, .prose h3 { line-height: 1.2; margin-top: 1.4em; }
+.prose h1 { margin-top: .2em; }
+.prose p, .prose li { line-height: 1.62; }
+.prose a { color: var(--accent-2); }
+.prose a:hover { color: var(--accent); }
+.prose pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 10px;
+  overflow-x: auto;
+  padding: .8rem;
+}
+.prose code {
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--accent-2) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-2) 24%, transparent);
+  border-radius: 5px;
+  padding: .08rem .24rem;
+}
+.prose pre code { background: transparent; border: 0; padding: 0; }
+.prose img, .prose video {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: block;
+  margin: 0.5rem auto;
+}
+.embed-note, .pdf-embed {
+  background: color-mix(in srgb, var(--accent-2) 10%, var(--card));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .65rem .8rem;
+}
+.missing {
+  color: #ff5767;
+  background: color-mix(in srgb, #ff5767 14%, transparent);
+  border: 1px solid color-mix(in srgb, #ff5767 36%, transparent);
+  border-radius: 6px;
+  padding: .1rem .35rem;
+}
+.theme-toggle {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+`
