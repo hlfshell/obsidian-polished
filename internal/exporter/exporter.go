@@ -1094,6 +1094,35 @@ main {
   padding: .08rem .24rem;
 }
 .prose pre code { background: transparent; border: 0; padding: 0; }
+.prose blockquote {
+  margin: 1rem 0;
+  padding: .6rem .9rem;
+  border-left: 4px solid var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+  border-radius: 8px;
+}
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: .95rem;
+}
+.prose th, .prose td {
+  border: 1px solid var(--border);
+  padding: .45rem .55rem;
+  text-align: left;
+}
+.prose th {
+  background: color-mix(in srgb, var(--accent-2) 12%, var(--card));
+}
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.2rem 0;
+}
+.prose input[type="checkbox"] {
+  accent-color: var(--accent-2);
+}
 .prose img, .prose video {
   max-width: 100%;
   border: 1px solid var(--border);
