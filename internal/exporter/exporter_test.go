@@ -59,11 +59,18 @@ func TestNoRootGeneratesLandingForAllNotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	index := string(indexBytes)
-	if !strings.Contains(index, "Alpha") || !strings.Contains(index, "Beta") {
-		t.Fatalf("index missing notes: %s", index)
+	if !strings.Contains(index, "Alpha") || !strings.Contains(index, "Folder") {
+		t.Fatalf("index missing root note/folder cards: %s", index)
 	}
 	if !strings.Contains(index, "theme-toggle") {
 		t.Fatalf("index missing theme toggle")
+	}
+	folderIndexBytes, err := os.ReadFile(filepath.Join(out, "collections", "folder", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(folderIndexBytes), "Beta") {
+		t.Fatalf("folder collection page missing nested note")
 	}
 }
 
@@ -125,6 +132,35 @@ func TestNotePageIncludesTimestamps(t *testing.T) {
 	}
 	if !strings.Contains(page, "Updated ") {
 		t.Fatalf("note page missing updated timestamp")
+	}
+}
+
+func TestNoteBreadcrumbIncludesFolders(t *testing.T) {
+	vault := t.TempDir()
+	mustWrite(t, filepath.Join(vault, "a", "b", "Deep.md"), "# Deep")
+
+	out := filepath.Join(t.TempDir(), "out")
+	_, err := Run(Options{VaultRoot: vault, OutDir: out, ThemeMode: ThemeBoth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pageBytes, err := os.ReadFile(filepath.Join(out, "notes", "a", "b", "Deep.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(pageBytes)
+	if !strings.Contains(page, `>Home</a>`) {
+		t.Fatalf("breadcrumb missing home link")
+	}
+	if !strings.Contains(page, `collections/a/index.html`) {
+		t.Fatalf("breadcrumb missing folder A link")
+	}
+	if !strings.Contains(page, `collections/a/b/index.html`) {
+		t.Fatalf("breadcrumb missing folder B link")
+	}
+	if !strings.Contains(page, `class="crumb current">Deep</span>`) {
+		t.Fatalf("breadcrumb missing current note")
 	}
 }
 

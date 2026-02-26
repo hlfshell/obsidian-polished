@@ -77,6 +77,13 @@ type exporter struct {
 	createdAt   map[string]time.Time
 }
 
+type collectionNode struct {
+	segment  string
+	relPath  string
+	children map[string]*collectionNode
+	notes    []string
+}
+
 func Run(opts Options) (Result, error) {
 	if opts.ThemeMode == "" {
 		opts.ThemeMode = ThemeBoth
@@ -305,6 +312,7 @@ func (e *exporter) renderNote(relNote string) error {
 		html.EscapeString(formatTime(createdAt)),
 		html.EscapeString(formatTime(updatedAt)),
 	)
+	breadcrumbs := e.breadcrumbsHTML(relNote, outPath, title)
 	page := fmt.Sprintf(`<!doctype html>
 <html lang="en">
 <head>
@@ -317,8 +325,7 @@ func (e *exporter) renderNote(relNote string) error {
 <body>
   <header>
     <div class="container">
-      <a class="home" href="%s">Home</a>
-      <span class="path">%s</span>
+%s
     </div>
   </header>
   <main class="container prose">
@@ -328,7 +335,7 @@ func (e *exporter) renderNote(relNote string) error {
   %s
 </body>
 </html>
-`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.relHref(outPath, filepath.Join(e.outDir, "index.html")), html.EscapeString(relNote), meta, rendered, e.themeToggleScript())
+`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, meta, rendered, e.themeToggleScript())
 
 	return os.WriteFile(outPath, []byte(page), 0o644)
 }
@@ -611,7 +618,6 @@ func (e *exporter) writeStyle() error {
 }
 
 func (e *exporter) writeIndex() error {
-	indexPath := filepath.Join(e.outDir, "index.html")
 	notes := make([]string, 0, len(e.noteSeen))
 	if e.opts.IndexAllNotes {
 		notes = append(notes, e.mdFiles...)
@@ -621,20 +627,106 @@ func (e *exporter) writeIndex() error {
 		}
 	}
 	sort.Strings(notes)
+	tree := buildCollectionTree(notes)
+	if err := e.writeCollectionPage(tree, filepath.Join(e.outDir, "index.html")); err != nil {
+		return err
+	}
+	return e.writeNestedCollectionPages(tree)
+}
 
+func buildCollectionTree(notes []string) *collectionNode {
+	root := &collectionNode{
+		children: map[string]*collectionNode{},
+	}
+	for _, note := range notes {
+		dir := path.Dir(toSlash(note))
+		if dir == "." {
+			dir = ""
+		}
+		node := root
+		acc := ""
+		if dir != "" {
+			for _, seg := range strings.Split(dir, "/") {
+				if seg == "" || seg == "." {
+					continue
+				}
+				if acc == "" {
+					acc = seg
+				} else {
+					acc = path.Join(acc, seg)
+				}
+				next, ok := node.children[seg]
+				if !ok {
+					next = &collectionNode{
+						segment:  seg,
+						relPath:  acc,
+						children: map[string]*collectionNode{},
+					}
+					node.children[seg] = next
+				}
+				node = next
+			}
+		}
+		node.notes = append(node.notes, note)
+	}
+	return root
+}
+
+func (e *exporter) writeNestedCollectionPages(root *collectionNode) error {
+	var walk func(node *collectionNode) error
+	walk = func(node *collectionNode) error {
+		keys := sortedChildKeys(node.children)
+		for _, key := range keys {
+			child := node.children[key]
+			outPath := e.collectionIndexPath(child.relPath)
+			if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+				return err
+			}
+			if err := e.writeCollectionPage(child, outPath); err != nil {
+				return err
+			}
+			if err := walk(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(root)
+}
+
+func (e *exporter) writeCollectionPage(node *collectionNode, outPath string) error {
 	var cards strings.Builder
-	for _, n := range notes {
-		title := strings.TrimSuffix(filepath.Base(n), filepath.Ext(n))
-		href := e.relHref(indexPath, e.noteHTMLPath(n))
-		cards.WriteString(fmt.Sprintf(`<a class="note-card" href="%s"><strong>%s</strong><span>%s</span></a>`, href, html.EscapeString(title), html.EscapeString(n)))
+	keys := sortedChildKeys(node.children)
+	for _, key := range keys {
+		child := node.children[key]
+		href := e.relHref(outPath, e.collectionIndexPath(child.relPath))
+		cards.WriteString(fmt.Sprintf(`<a class="note-card folder-card" href="%s"><strong>%s</strong><span>%s/</span></a>`,
+			href,
+			html.EscapeString(displayName(key)),
+			html.EscapeString(child.relPath),
+		))
 	}
 
-	header := "Vault Export"
-	intro := "Browse exported notes."
-	if e.opts.RootNote != "" {
-		header = "Note Export"
-		intro = "Root note plus linked notes based on traversal settings."
+	if len(node.notes) > 0 {
+		sort.Strings(node.notes)
+		for _, n := range node.notes {
+			title := strings.TrimSuffix(filepath.Base(n), filepath.Ext(n))
+			href := e.relHref(outPath, e.noteHTMLPath(n))
+			cards.WriteString(fmt.Sprintf(`<a class="note-card" href="%s"><strong>%s</strong><span>%s</span></a>`,
+				href,
+				html.EscapeString(title),
+				html.EscapeString(n),
+			))
+		}
 	}
+
+	pageTitle := "Vault Home"
+	intro := "Browse folders and notes."
+	if node.relPath != "" {
+		pageTitle = "Folder: " + displayName(node.segment)
+		intro = "Collection view for this folder."
+	}
+	breadcrumbs := e.collectionBreadcrumbHTML(node.relPath, outPath)
 
 	page := fmt.Sprintf(`<!doctype html>
 <html lang="en">
@@ -643,9 +735,14 @@ func (e *exporter) writeIndex() error {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>%s</title>
   %s
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="%s">
 </head>
 <body>
+  <header>
+    <div class="container">
+%s
+    </div>
+  </header>
   <main class="container landing">
     <h1>%s</h1>
     <p>%s</p>
@@ -654,9 +751,98 @@ func (e *exporter) writeIndex() error {
   %s
 </body>
 </html>
-`, html.EscapeString(header), e.themeInitScript(), html.EscapeString(header), html.EscapeString(intro), cards.String(), e.themeToggleScript())
+`, html.EscapeString(pageTitle), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), breadcrumbs, html.EscapeString(pageTitle), html.EscapeString(intro), cards.String(), e.themeToggleScript())
 
-	return os.WriteFile(indexPath, []byte(page), 0o644)
+	return os.WriteFile(outPath, []byte(page), 0o644)
+}
+
+func (e *exporter) collectionIndexPath(relFolder string) string {
+	relFolder = strings.Trim(toSlash(relFolder), "/")
+	if relFolder == "" {
+		return filepath.Join(e.outDir, "index.html")
+	}
+	return filepath.Join(e.outDir, "collections", filepath.FromSlash(relFolder), "index.html")
+}
+
+func (e *exporter) collectionBreadcrumbHTML(relFolder, outPath string) string {
+	var items []string
+	homeHref := e.relHref(outPath, filepath.Join(e.outDir, "index.html"))
+	items = append(items, fmt.Sprintf(`<a class="crumb home" href="%s">Home</a>`, homeHref))
+
+	acc := ""
+	parts := strings.Split(strings.Trim(toSlash(relFolder), "/"), "/")
+	for _, p := range parts {
+		if p == "" || p == "." {
+			continue
+		}
+		if acc == "" {
+			acc = p
+		} else {
+			acc = path.Join(acc, p)
+		}
+		href := e.relHref(outPath, e.collectionIndexPath(acc))
+		items = append(items, fmt.Sprintf(`<a class="crumb" href="%s">%s</a>`, href, html.EscapeString(displayName(p))))
+	}
+	return `<nav class="breadcrumbs">` + strings.Join(items, `<span class="sep">|</span>`) + `</nav>`
+}
+
+func (e *exporter) breadcrumbsHTML(relNote, outPath, noteTitle string) string {
+	var items []string
+	homeHref := e.relHref(outPath, filepath.Join(e.outDir, "index.html"))
+	items = append(items, fmt.Sprintf(`<a class="crumb home" href="%s">Home</a>`, homeHref))
+
+	dir := path.Dir(toSlash(relNote))
+	if dir != "." && dir != "" {
+		acc := ""
+		parts := strings.Split(dir, "/")
+		for _, p := range parts {
+			if p == "" || p == "." {
+				continue
+			}
+			if acc == "" {
+				acc = p
+			} else {
+				acc = path.Join(acc, p)
+			}
+			href := e.relHref(outPath, e.collectionIndexPath(acc))
+			items = append(items, fmt.Sprintf(`<a class="crumb" href="%s">%s</a>`, href, html.EscapeString(displayName(p))))
+		}
+	}
+	items = append(items, fmt.Sprintf(`<span class="crumb current">%s</span>`, html.EscapeString(noteTitle)))
+	return `<nav class="breadcrumbs">` + strings.Join(items, `<span class="sep">|</span>`) + `</nav>`
+}
+
+func sortedChildKeys(children map[string]*collectionNode) []string {
+	keys := make([]string, 0, len(children))
+	for k := range children {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return strings.ToLower(keys[i]) < strings.ToLower(keys[j])
+	})
+	return keys
+}
+
+func displayName(s string) string {
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	parts := strings.Fields(s)
+	for i := range parts {
+		r := []rune(parts[i])
+		if len(r) == 0 {
+			continue
+		}
+		first := strings.ToUpper(string(r[0]))
+		rest := ""
+		if len(r) > 1 {
+			rest = strings.ToLower(string(r[1:]))
+		}
+		parts[i] = first + rest
+	}
+	if len(parts) == 0 {
+		return s
+	}
+	return strings.Join(parts, " ")
 }
 
 func (e *exporter) resolveCreatedAt(relNote string, fallback time.Time) time.Time {
@@ -822,8 +1008,29 @@ header .container {
   align-items: center;
   padding: .8rem 0;
 }
-.home { color: var(--accent); text-decoration: none; font-weight: 700; }
-.path { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+.crumb {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .92rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: .12rem .45rem;
+}
+.crumb:hover { border-color: var(--border); color: var(--text); }
+.crumb.home { color: var(--accent); font-weight: 700; }
+.crumb.current {
+  color: var(--text);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
+}
+.sep { color: var(--muted); font-size: .85rem; }
 .note-meta {
   margin-bottom: 1.25rem;
   padding: .75rem .9rem;
@@ -869,6 +1076,7 @@ main {
 }
 .note-card strong { color: var(--accent); }
 .note-card span { color: var(--muted); font-size: .87rem; }
+.folder-card strong { color: var(--accent-2); }
 .prose h1, .prose h2, .prose h3 { line-height: 1.2; margin-top: 1.4em; }
 .prose h1 { margin-top: .2em; }
 .prose p, .prose li { line-height: 1.62; }
