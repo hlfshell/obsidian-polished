@@ -31,6 +31,16 @@ func (o *stringOpt) Set(v string) error {
 	return nil
 }
 
+type stringListOpt struct {
+	values []string
+}
+
+func (o *stringListOpt) String() string { return strings.Join(o.values, ",") }
+func (o *stringListOpt) Set(v string) error {
+	o.values = append(o.values, v)
+	return nil
+}
+
 type intOpt struct {
 	value int
 	set   bool
@@ -148,7 +158,7 @@ func main() {
 
 	var (
 		fConfig          = stringOpt{}
-		fVault           = stringOpt{value: "."}
+		fVaults          = stringListOpt{}
 		fRoot            = stringOpt{}
 		fOut             = stringOpt{value: "./html_export"}
 		fMaxDepth        = intOpt{value: -1}
@@ -169,7 +179,7 @@ func main() {
 	fs := flag.NewFlagSet("obsidian-polished", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Var(&fConfig, "config", "Settings YAML file path")
-	fs.Var(&fVault, "vault", "Obsidian vault root")
+	fs.Var(&fVaults, "vault", "Obsidian vault root (repeat for multiple notebooks)")
 	fs.Var(&fRoot, "root-note", "Root note to export (optional)")
 	fs.Var(&fOut, "out", "Output directory")
 	fs.Var(&fMaxDepth, "max-depth", "Maximum link depth from root note (-1 means unlimited)")
@@ -221,7 +231,7 @@ func main() {
 	}
 
 	rc, err := buildRunConfig(settings, configDir, flagOverrides{
-		vault:           fVault,
+		vaults:          fVaults.values,
 		rootNote:        fRoot,
 		out:             fOut,
 		maxDepth:        fMaxDepth,
@@ -270,7 +280,7 @@ func main() {
 }
 
 type flagOverrides struct {
-	vault           stringOpt
+	vaults          []string
 	rootNote        stringOpt
 	out             stringOpt
 	maxDepth        intOpt
@@ -417,9 +427,15 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 			MaxDepth:        settings.MaxDepth,
 		})
 	}
+	if len(fo.vaults) > 1 {
+		nbDefs = make([]NotebookSettings, 0, len(fo.vaults))
+		for _, v := range fo.vaults {
+			nbDefs = append(nbDefs, NotebookSettings{Vault: v})
+		}
+	}
 
-	if len(nbDefs) > 1 && (fo.vault.set || fo.rootNote.set) {
-		return runConfig{}, fmt.Errorf("--vault and --root-note are only valid with a single notebook")
+	if len(nbDefs) > 1 && fo.rootNote.set {
+		return runConfig{}, fmt.Errorf("--root-note is only valid with a single notebook")
 	}
 	if len(nbDefs) > 1 && fo.zip.set && fo.zip.value {
 		return runConfig{}, fmt.Errorf("--zip is only supported with a single notebook")
@@ -492,8 +508,8 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 		}
 
 		vault := nb.Vault
-		if fo.vault.set {
-			vault = fo.vault.value
+		if len(fo.vaults) == 1 {
+			vault = fo.vaults[0]
 		}
 		if vault == "" {
 			vault = "."
@@ -548,8 +564,8 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 		})
 	}
 
-	if len(notebooks) == 1 && notebooks[0].gitRepo == "" && !fromConfig && !fo.vault.set {
-		notebooks[0].vault = fo.vault.value
+	if len(notebooks) == 1 && notebooks[0].gitRepo == "" && !fromConfig && len(fo.vaults) == 0 {
+		notebooks[0].vault = "."
 	}
 
 	if len(notebooks) == 1 && (fo.zip.set && fo.zip.value) && watchMode {
@@ -940,7 +956,7 @@ Behavior:
   When a settings file is provided, flags override settings values.
 
 Core flags:
-  --vault string                 Vault root (single notebook)
+  --vault path                   Vault root (repeat for multiple notebooks)
   --root-note string             Root note; omitted means export all notes
   --out string                   Output directory (default ./html_export)
   --watch                        Regenerate on changes
