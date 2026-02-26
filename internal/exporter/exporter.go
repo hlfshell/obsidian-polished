@@ -920,9 +920,8 @@ func (e *exporter) themeToggleScript() string {
 }
 
 func (e *exporter) brandLogoHTML(outPath string) string {
-	href := e.relHref(outPath, filepath.Join(e.outDir, "index.html"))
 	src := e.relHref(outPath, filepath.Join(e.outDir, "assets", "branding", "logo.png"))
-	return fmt.Sprintf(`<a class="brand-mark" href="%s" title="Home"><img src="%s" alt="obsidian-polished logo"></a>`, href, src)
+	return fmt.Sprintf(`<span class="brand-mark" aria-hidden="true"><img src="%s" alt="obsidian-polished logo"></span>`, src)
 }
 
 func isExcluded(rel string) bool {

@@ -61,20 +61,19 @@ header .container {
 .brand {
   display: flex;
   align-items: center;
-  gap: .7rem;
-  text-decoration: none;
+  gap: .85rem;
   color: inherit;
 }
 
 .brand img {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--card) 86%, transparent);
 }
 
-.brand strong { font-size: 1rem; letter-spacing: .01em; }
+.brand strong { font-size: 1.25rem; letter-spacing: .01em; }
 
 main { margin: 1.6rem auto 2.4rem; }
 
