@@ -1,0 +1,42 @@
+services:
+  obsidian-polished:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: obsidian-polished:latest
+    container_name: obsidian-polished
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      OBS_VAULT: /data/vault
+      OBS_OUT: /data/out
+
+      # Export options
+      OBS_ROOT_NOTE: ""
+      OBS_THEME: both
+      OBS_MAX_DEPTH: -1
+      OBS_CSS: ""
+
+      # Runtime loop
+      OBS_WATCH: "true"
+      OBS_WATCH_POLL: 2s
+      OBS_WATCH_DEBOUNCE: 1s
+
+      # Optional git sync (force branch and hard reset/clean)
+      OBS_GIT_SYNC: "false"
+      OBS_GIT_PULL_INTERVAL: 5m
+      OBS_GIT_REMOTE: origin
+      OBS_GIT_BRANCH: ""
+
+      # Optional static hosting via nginx
+      OBS_SERVE_STATIC: "true"
+      OBS_HTTP_PORT: 8080
+
+      # Optional basic auth (set true + credentials to lock down notes)
+      OBS_AUTH_ENABLED: "false"
+      OBS_AUTH_USER: notes
+      OBS_AUTH_PASSWORD: change-me
+    volumes:
+      - ./vault:/data/vault
+      - ./output:/data/out

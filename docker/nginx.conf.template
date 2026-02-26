@@ -1,0 +1,12 @@
+server {
+    listen __PORT__;
+    listen [::]:__PORT__;
+    server_name _;
+    root __ROOT__;
+    index index.html;
+
+    location / {
+        __AUTH_BLOCK__
+        try_files $uri $uri/ /index.html;
+    }
+}

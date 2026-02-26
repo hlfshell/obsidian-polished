@@ -1,3 +1,3 @@
-module github.com/keith/obsidian-html-sharer
+module github.com/hlfshell/obsidian-polished
 
 go 1.22

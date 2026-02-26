@@ -6,13 +6,15 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
-	"github.com/keith/obsidian-html-sharer/internal/ziputil"
+	"github.com/hlfshell/obsidian-polished/internal/ziputil"
 )
 
 var (
@@ -36,14 +38,17 @@ const (
 )
 
 type Options struct {
-	VaultRoot string
-	OutDir    string
-	RootNote  string
-	MaxDepth  int
-	ThemeMode ThemeMode
-	CSSPath   string
-	Zip       bool
-	ZipPath   string
+	VaultRoot     string
+	OutDir        string
+	RootNote      string
+	MaxDepth      int
+	ThemeMode     ThemeMode
+	CSSPath       string
+	Zip           bool
+	ZipPath       string
+	Incremental   bool
+	SkipIndex     bool
+	IndexAllNotes bool
 }
 
 type Result struct {
@@ -67,11 +72,17 @@ type exporter struct {
 	mediaNeeded map[string]bool
 	noteDepth   map[string]int
 	queue       []string
+	gitChecked  bool
+	isGitRepo   bool
+	createdAt   map[string]time.Time
 }
 
 func Run(opts Options) (Result, error) {
 	if opts.ThemeMode == "" {
 		opts.ThemeMode = ThemeBoth
+	}
+	if opts.Incremental && opts.Zip {
+		return Result{}, fmt.Errorf("zip output is not supported in incremental mode")
 	}
 	if opts.MaxDepth < -1 {
 		return Result{}, fmt.Errorf("max-depth must be -1 or greater")
@@ -100,12 +111,19 @@ func Run(opts Options) (Result, error) {
 		noteSeen:    map[string]bool{},
 		mediaNeeded: map[string]bool{},
 		noteDepth:   map[string]int{},
+		createdAt:   map[string]time.Time{},
 	}
 	if err := e.scanVault(); err != nil {
 		return Result{}, err
 	}
-	if err := e.prepareOutput(); err != nil {
-		return Result{}, err
+	if opts.Incremental {
+		if err := e.prepareOutputIncremental(); err != nil {
+			return Result{}, err
+		}
+	} else {
+		if err := e.prepareOutput(); err != nil {
+			return Result{}, err
+		}
 	}
 
 	if err := e.seedQueue(); err != nil {
@@ -120,8 +138,10 @@ func Run(opts Options) (Result, error) {
 	if err := e.writeStyle(); err != nil {
 		return Result{}, err
 	}
-	if err := e.writeIndex(); err != nil {
-		return Result{}, err
+	if !opts.SkipIndex {
+		if err := e.writeIndex(); err != nil {
+			return Result{}, err
+		}
 	}
 
 	res := Result{
@@ -194,6 +214,13 @@ func (e *exporter) prepareOutput() error {
 	return os.MkdirAll(e.assetsOut, 0o755)
 }
 
+func (e *exporter) prepareOutputIncremental() error {
+	if err := os.MkdirAll(e.notesOut, 0o755); err != nil {
+		return err
+	}
+	return os.MkdirAll(e.assetsOut, 0o755)
+}
+
 func (e *exporter) seedQueue() error {
 	if e.opts.RootNote == "" {
 		sorted := append([]string(nil), e.mdFiles...)
@@ -253,7 +280,12 @@ func (e *exporter) canFollow(current string) bool {
 }
 
 func (e *exporter) renderNote(relNote string) error {
-	raw, err := os.ReadFile(filepath.Join(e.vaultRoot, filepath.FromSlash(relNote)))
+	notePath := filepath.Join(e.vaultRoot, filepath.FromSlash(relNote))
+	raw, err := os.ReadFile(notePath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(notePath)
 	if err != nil {
 		return err
 	}
@@ -266,6 +298,13 @@ func (e *exporter) renderNote(relNote string) error {
 	}
 
 	title := strings.TrimSuffix(filepath.Base(relNote), filepath.Ext(relNote))
+	updatedAt := info.ModTime()
+	createdAt := e.resolveCreatedAt(relNote, updatedAt)
+	meta := fmt.Sprintf(`<div class="note-meta"><h1>%s</h1><div class="meta-row"><span>Created %s</span><span>Updated %s</span></div></div>`,
+		html.EscapeString(title),
+		html.EscapeString(formatTime(createdAt)),
+		html.EscapeString(formatTime(updatedAt)),
+	)
 	page := fmt.Sprintf(`<!doctype html>
 <html lang="en">
 <head>
@@ -284,11 +323,12 @@ func (e *exporter) renderNote(relNote string) error {
   </header>
   <main class="container prose">
 %s
+%s
   </main>
   %s
 </body>
 </html>
-`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.relHref(outPath, filepath.Join(e.outDir, "index.html")), html.EscapeString(relNote), rendered, e.themeToggleScript())
+`, html.EscapeString(title), e.themeInitScript(), e.relHref(outPath, filepath.Join(e.outDir, "style.css")), e.relHref(outPath, filepath.Join(e.outDir, "index.html")), html.EscapeString(relNote), meta, rendered, e.themeToggleScript())
 
 	return os.WriteFile(outPath, []byte(page), 0o644)
 }
@@ -573,8 +613,12 @@ func (e *exporter) writeStyle() error {
 func (e *exporter) writeIndex() error {
 	indexPath := filepath.Join(e.outDir, "index.html")
 	notes := make([]string, 0, len(e.noteSeen))
-	for n := range e.noteSeen {
-		notes = append(notes, n)
+	if e.opts.IndexAllNotes {
+		notes = append(notes, e.mdFiles...)
+	} else {
+		for n := range e.noteSeen {
+			notes = append(notes, n)
+		}
 	}
 	sort.Strings(notes)
 
@@ -613,6 +657,44 @@ func (e *exporter) writeIndex() error {
 `, html.EscapeString(header), e.themeInitScript(), html.EscapeString(header), html.EscapeString(intro), cards.String(), e.themeToggleScript())
 
 	return os.WriteFile(indexPath, []byte(page), 0o644)
+}
+
+func (e *exporter) resolveCreatedAt(relNote string, fallback time.Time) time.Time {
+	if v, ok := e.createdAt[relNote]; ok {
+		return v
+	}
+	if !e.gitChecked {
+		e.gitChecked = true
+		cmd := exec.Command("git", "-C", e.vaultRoot, "rev-parse", "--is-inside-work-tree")
+		out, err := cmd.Output()
+		e.isGitRepo = err == nil && strings.TrimSpace(string(out)) == "true"
+	}
+	if !e.isGitRepo {
+		e.createdAt[relNote] = fallback
+		return fallback
+	}
+	cmd := exec.Command("git", "-C", e.vaultRoot, "log", "--diff-filter=A", "--follow", "--format=%aI", "--", filepath.FromSlash(relNote))
+	out, err := cmd.Output()
+	if err != nil {
+		e.createdAt[relNote] = fallback
+		return fallback
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+		e.createdAt[relNote] = fallback
+		return fallback
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(lines[len(lines)-1]))
+	if err != nil {
+		e.createdAt[relNote] = fallback
+		return fallback
+	}
+	e.createdAt[relNote] = t
+	return t
+}
+
+func formatTime(t time.Time) string {
+	return t.Local().Format("Jan 2, 2006 3:04 PM MST")
 }
 
 func (e *exporter) themeInitScript() string {
@@ -742,6 +824,28 @@ header .container {
 }
 .home { color: var(--accent); text-decoration: none; font-weight: 700; }
 .path { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+.note-meta {
+  margin-bottom: 1.25rem;
+  padding: .75rem .9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-2) 8%, var(--card));
+}
+.note-meta h1 {
+  margin: 0 0 .45rem;
+}
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .55rem;
+  color: var(--muted);
+  font-size: .88rem;
+}
+.meta-row span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: .18rem .58rem;
+}
 main {
   margin: 1.4rem auto 2.4rem;
   background: var(--card);

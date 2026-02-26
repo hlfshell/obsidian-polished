@@ -105,6 +105,29 @@ func TestZipOutput(t *testing.T) {
 	}
 }
 
+func TestNotePageIncludesTimestamps(t *testing.T) {
+	vault := t.TempDir()
+	mustWrite(t, filepath.Join(vault, "Stamp.md"), "# Stamp")
+
+	out := filepath.Join(t.TempDir(), "out")
+	_, err := Run(Options{VaultRoot: vault, OutDir: out, ThemeMode: ThemeBoth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pageBytes, err := os.ReadFile(filepath.Join(out, "notes", "Stamp.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(pageBytes)
+	if !strings.Contains(page, "Created ") {
+		t.Fatalf("note page missing created timestamp")
+	}
+	if !strings.Contains(page, "Updated ") {
+		t.Fatalf("note page missing updated timestamp")
+	}
+}
+
 func mustWrite(t *testing.T, p, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
