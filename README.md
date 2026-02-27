@@ -2,19 +2,100 @@
 
 ![obsidian-polished logo](internal/uiassets/logo.png)
 
-`obsidian-polished` exports Obsidian vaults into portable static HTML.
+`obsidian-polished` is a <span style="font-weight:bold; background: linear-gradient(90deg, red, orange, yellow, green, blue, indigo, violet); background-size: 400% 400%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-text-animate 3s ease-in-out infinite;">vibe coded</span> project - so take that as you will. It is a small set of tooling to export your Obsidian vaults into portable static HTML. It also has the ability to watch for changes locally or remotely via git so a site can stay up to date with your notes.
 
-It supports:
-- single-vault local export
-- watch mode
-- multi-notebook hosting from a `settings.yml`
-- per-notebook git repos with periodic pull/reset/clean sync
-- a hub `index.html` that links to each notebook
+<style>
+@keyframes rainbow-text-animate {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+</style>
+
+## Install
+
+Install `just` first:
+
+```bash
+# macOS
+brew install just
+
+# Debian/Ubuntu
+sudo apt-get install just
+```
+
+Then run:
+
+```bash
+just help
+```
 
 ## Build
 
+With `just`:
+
 ```bash
-go build -o obsidian-polished ./cmd/obsidian-polished
+just build-go
+just build
+```
+
+Manually:
+
+```bash
+mkdir -p bin
+go build -o bin/obsidian-polished ./cmd/obsidian-polished
+docker build -f Dockerfile -t obsidian-polished:latest .
+```
+
+## Just Recipes
+
+Use `just help` to see all commands.
+
+Build Go binaries from every `cmd/*` package to `bin/<cmd-name>`:
+
+```bash
+just build-go
+```
+
+Build Docker image:
+
+```bash
+just build-docker
+just build-docker obsidian-polished:dev
+```
+
+Build and publish a Docker Hub image from the current git tag (fails if `HEAD` is not exactly tagged):
+
+```bash
+just docker-publish your-dockerhub-user/obsidian-polished
+```
+
+Build both Go binaries and Docker image:
+
+```bash
+just build
+```
+
+Docker Compose helpers (default file is `docker-compose.yml`):
+
+```bash
+just compose-build
+just compose-up
+just compose-down
+```
+
+Use a different compose file and pass extra args:
+
+```bash
+just compose-up docker-compose.yml --build
+just compose-down docker-compose.yml --remove-orphans
+just compose docker-compose.yml logs -f
 ```
 
 ## CLI
