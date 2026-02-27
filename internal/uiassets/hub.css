@@ -93,8 +93,9 @@ main { margin: 2.2rem auto 2.4rem; }
 .book img,
 .book .placeholder {
   width: 100%;
-  aspect-ratio: 16 / 10;
-  object-fit: cover;
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+  padding: .35rem;
   border-radius: 10px;
   border: 1px solid var(--border);
   margin-bottom: .7rem;
