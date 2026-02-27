@@ -21,6 +21,7 @@ OBS_GIT_SYNC="${OBS_GIT_SYNC:-false}"
 OBS_GIT_PULL_INTERVAL="${OBS_GIT_PULL_INTERVAL:-5m}"
 OBS_GIT_REMOTE="${OBS_GIT_REMOTE:-origin}"
 OBS_GIT_BRANCH="${OBS_GIT_BRANCH:-}"
+OBS_GIT_SSH_KEY="${OBS_GIT_SSH_KEY:-}"
 OBS_SERVE_STATIC="${OBS_SERVE_STATIC:-false}"
 OBS_HTTP_PORT="${OBS_HTTP_PORT:-8080}"
 OBS_AUTH_ENABLED="${OBS_AUTH_ENABLED:-false}"
@@ -41,7 +42,7 @@ fi
 if [ -n "$OBS_CSS" ]; then
   set -- "$@" --css "$OBS_CSS"
 fi
-if is_true "$OBS_WATCH"; then
+  if is_true "$OBS_WATCH"; then
   set -- "$@" --watch --watch-poll "$OBS_WATCH_POLL" --watch-debounce "$OBS_WATCH_DEBOUNCE"
   if is_true "$OBS_GIT_SYNC"; then
     set -- "$@" --watch-git-pull --watch-git-pull-interval "$OBS_GIT_PULL_INTERVAL" --watch-git-remote "$OBS_GIT_REMOTE"
@@ -49,6 +50,9 @@ if is_true "$OBS_WATCH"; then
       set -- "$@" --watch-git-branch "$OBS_GIT_BRANCH"
     fi
   fi
+fi
+if [ -n "$OBS_GIT_SSH_KEY" ]; then
+  set -- "$@" --git-ssh-key "$OBS_GIT_SSH_KEY"
 fi
 
 if is_true "$OBS_SERVE_STATIC"; then

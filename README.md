@@ -50,7 +50,7 @@ Manually:
 ```bash
 mkdir -p bin
 go build -o bin/obsidian-polished ./cmd/obsidian-polished
-docker build -f Dockerfile -t obsidian-polished:latest .
+docker build -f Dockerfile -t hlfshell/obsidian-polished:latest .
 ```
 
 ## Just Recipes
@@ -67,13 +67,13 @@ Build Docker image:
 
 ```bash
 just build-docker
-just build-docker obsidian-polished:dev
+just build-docker hlfshell/obsidian-polished:dev
 ```
 
 Build and publish a Docker Hub image from the current git tag (fails if `HEAD` is not exactly tagged):
 
 ```bash
-just docker-publish your-dockerhub-user/obsidian-polished
+just docker-publish
 ```
 
 Build both Go binaries and Docker image:
@@ -93,7 +93,7 @@ just compose-down
 Use a different compose file and pass extra args:
 
 ```bash
-just compose-up docker-compose.yml --build
+just compose-up docker-compose.yml --pull always
 just compose-down docker-compose.yml --remove-orphans
 just compose docker-compose.yml logs -f
 ```
@@ -118,7 +118,8 @@ Watch with git pull:
   --out /tmp/export \
   --watch \
   --watch-git-pull \
-  --watch-git-pull-interval 5m
+  --watch-git-pull-interval 5m \
+  --git-ssh-key ~/.ssh/id_ed25519
 ```
 
 ## Settings File
@@ -145,12 +146,14 @@ watch: true
 watch_poll: 2s
 watch_debounce: 1s
 theme: both
+git_ssh_key: ~/.ssh/id_ed25519
 
 notebooks:
   - name: Team Notes
     description: Team docs and architecture notes
     git_repo: git@github.com:org/team-notes.git
     git_branch: main
+    git_ssh_key: ~/.ssh/id_team_notes
     image: ./images/team-cover.jpg
     root_note: Home.md
 
@@ -177,6 +180,7 @@ If `root_note` is omitted, that notebook exports from the vault root (all notes)
 - `--watch-git-pull-interval` git sync interval
 - `--watch-git-branch` sync branch (`main`/`master` auto when empty)
 - `--watch-git-remote` remote name (default `origin`)
+- `--git-ssh-key` SSH private key file for git clone/fetch/pull
 - `--theme` `both|light|dark`
 - `--css` custom stylesheet for notebook pages
 - `--zip` / `--zip-path` zip output (single notebook only)

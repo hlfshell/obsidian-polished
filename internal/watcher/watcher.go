@@ -24,6 +24,7 @@ type Options struct {
 	GitPullInterval time.Duration
 	GitBranch       string
 	GitRemote       string
+	GitSSHKey       string
 	NotebookName    string
 	AfterExport     func(notebook string, res exporter.Result)
 }
@@ -127,7 +128,7 @@ func Run(opts Options) error {
 			return gitTicker.C
 		}():
 			generationMu.Lock()
-			changed, err := syncGit(opts.ExportOptions.VaultRoot, opts.GitRemote, opts.GitBranch)
+			changed, err := syncGit(opts.ExportOptions.VaultRoot, opts.GitRemote, opts.GitBranch, opts.GitSSHKey)
 			generationMu.Unlock()
 			if err != nil {
 				fmt.Printf("git sync failed: %v\n", err)
@@ -341,43 +342,43 @@ func scanFiles(vaultRoot, outDir string) (map[string]fileState, error) {
 	return res, nil
 }
 
-func syncGit(vaultRoot, remote, preferredBranch string) (bool, error) {
-	before, err := gitOutput(vaultRoot, "rev-parse", "HEAD")
+func syncGit(vaultRoot, remote, preferredBranch, sshKey string) (bool, error) {
+	before, err := gitOutput(vaultRoot, sshKey, "rev-parse", "HEAD")
 	if err != nil {
 		return false, err
 	}
-	if _, err := gitOutput(vaultRoot, "fetch", remote, "--prune"); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "fetch", remote, "--prune"); err != nil {
 		return false, err
 	}
 
 	branch := preferredBranch
 	if branch == "" {
-		branch, err = pickBranch(vaultRoot, remote)
+		branch, err = pickBranch(vaultRoot, remote, sshKey)
 		if err != nil {
 			return false, err
 		}
 	}
 
-	if _, err := gitOutput(vaultRoot, "checkout", "-B", branch, remote+"/"+branch); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "checkout", "-B", branch, remote+"/"+branch); err != nil {
 		return false, err
 	}
-	if _, err := gitOutput(vaultRoot, "reset", "--hard", remote+"/"+branch); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "reset", "--hard", remote+"/"+branch); err != nil {
 		return false, err
 	}
-	if _, err := gitOutput(vaultRoot, "clean", "-fd"); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "clean", "-fd"); err != nil {
 		return false, err
 	}
-	after, err := gitOutput(vaultRoot, "rev-parse", "HEAD")
+	after, err := gitOutput(vaultRoot, sshKey, "rev-parse", "HEAD")
 	if err != nil {
 		return false, err
 	}
 	return strings.TrimSpace(before) != strings.TrimSpace(after), nil
 }
 
-func pickBranch(vaultRoot, remote string) (string, error) {
+func pickBranch(vaultRoot, remote, sshKey string) (string, error) {
 	candidates := []string{"main", "master"}
 	for _, c := range candidates {
-		_, err := gitOutput(vaultRoot, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+c)
+		_, err := gitOutput(vaultRoot, sshKey, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+c)
 		if err == nil {
 			return c, nil
 		}
@@ -386,17 +387,26 @@ func pickBranch(vaultRoot, remote string) (string, error) {
 }
 
 func gitIsRepo(vaultRoot string) bool {
-	out, err := gitOutput(vaultRoot, "rev-parse", "--is-inside-work-tree")
+	out, err := gitOutput(vaultRoot, "", "rev-parse", "--is-inside-work-tree")
 	return err == nil && strings.TrimSpace(out) == "true"
 }
 
-func gitOutput(vaultRoot string, args ...string) (string, error) {
+func gitOutput(vaultRoot, sshKey string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", vaultRoot}, args...)...)
+	applyGitSSHKey(cmd, sshKey)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func applyGitSSHKey(cmd *exec.Cmd, sshKey string) {
+	if strings.TrimSpace(sshKey) == "" {
+		return
+	}
+	escaped := strings.ReplaceAll(sshKey, `'`, `'"'"'`)
+	cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND=ssh -i '"+escaped+"' -o IdentitiesOnly=yes")
 }
 
 func isExcluded(rel string) bool {

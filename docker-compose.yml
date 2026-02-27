@@ -1,9 +1,6 @@
 services:
   obsidian-polished:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: obsidian-polished:latest
+    image: hlfshell/obsidian-polished:latest
     container_name: obsidian-polished
     restart: unless-stopped
     ports:
@@ -28,6 +25,7 @@ services:
       OBS_GIT_PULL_INTERVAL: 5m
       OBS_GIT_REMOTE: origin
       OBS_GIT_BRANCH: ""
+      OBS_GIT_SSH_KEY: ""
 
       # Optional static hosting via nginx
       OBS_SERVE_STATIC: "true"

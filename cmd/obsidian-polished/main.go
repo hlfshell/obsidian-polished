@@ -92,6 +92,7 @@ type Settings struct {
 	GitRepo         string             `yaml:"git_repo"`
 	GitBranch       string             `yaml:"git_branch"`
 	GitRemote       string             `yaml:"git_remote"`
+	GitSSHKey       string             `yaml:"git_ssh_key"`
 	WatchGitPull    *bool              `yaml:"watch_git_pull"`
 	GitPullInterval string             `yaml:"git_pull_interval"`
 	Out             string             `yaml:"out"`
@@ -114,6 +115,7 @@ type NotebookSettings struct {
 	GitRepo         string `yaml:"git_repo"`
 	GitBranch       string `yaml:"git_branch"`
 	GitRemote       string `yaml:"git_remote"`
+	GitSSHKey       string `yaml:"git_ssh_key"`
 	WatchGitPull    *bool  `yaml:"watch_git_pull"`
 	GitPullInterval string `yaml:"git_pull_interval"`
 	Theme           string `yaml:"theme"`
@@ -131,6 +133,7 @@ type notebookRuntime struct {
 	gitRepo         string
 	gitBranch       string
 	gitRemote       string
+	gitSSHKey       string
 	gitPullInterval time.Duration
 	watchGitPull    bool
 	theme           exporter.ThemeMode
@@ -177,6 +180,7 @@ func main() {
 		fWatchGitPullInt = stringOpt{value: "5m"}
 		fWatchGitBranch  = stringOpt{}
 		fWatchGitRemote  = stringOpt{value: "origin"}
+		fGitSSHKey       = stringOpt{}
 		fHelp            = boolOpt{}
 	)
 
@@ -198,6 +202,7 @@ func main() {
 	fs.Var(&fWatchGitPullInt, "watch-git-pull-interval", "Git sync interval")
 	fs.Var(&fWatchGitBranch, "watch-git-branch", "Git branch to sync (default main/master)")
 	fs.Var(&fWatchGitRemote, "watch-git-remote", "Git remote name")
+	fs.Var(&fGitSSHKey, "git-ssh-key", "SSH private key for git operations")
 	fs.Var(&fHelp, "h", "Show help")
 	fs.Var(&fHelp, "help", "Show help")
 
@@ -250,6 +255,7 @@ func main() {
 		gitPullInterval: fWatchGitPullInt,
 		gitBranch:       fWatchGitBranch,
 		gitRemote:       fWatchGitRemote,
+		gitSSHKey:       fGitSSHKey,
 	}, cfgArg != "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -299,6 +305,7 @@ type flagOverrides struct {
 	gitPullInterval stringOpt
 	gitBranch       stringOpt
 	gitRemote       stringOpt
+	gitSSHKey       stringOpt
 }
 
 func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromConfig bool) (runConfig, error) {
@@ -407,6 +414,17 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 		gitBranch = fo.gitBranch.value
 	}
 
+	gitSSHKey := strings.TrimSpace(settings.GitSSHKey)
+	if fo.gitSSHKey.set {
+		gitSSHKey = strings.TrimSpace(fo.gitSSHKey.value)
+	}
+	if gitSSHKey != "" {
+		gitSSHKey, err = resolvePath(gitSSHKey, configDir)
+		if err != nil {
+			return runConfig{}, err
+		}
+	}
+
 	css := settings.CSS
 	if fo.css.set {
 		css = fo.css.value
@@ -425,6 +443,7 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 			GitRepo:         settings.GitRepo,
 			GitBranch:       settings.GitBranch,
 			GitRemote:       settings.GitRemote,
+			GitSSHKey:       settings.GitSSHKey,
 			WatchGitPull:    settings.WatchGitPull,
 			GitPullInterval: settings.GitPullInterval,
 			Theme:           settings.Theme,
@@ -512,6 +531,17 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 			curGitBranch = fo.gitBranch.value
 		}
 
+		curGitSSHKey := gitSSHKey
+		if strings.TrimSpace(nb.GitSSHKey) != "" {
+			curGitSSHKey, err = resolvePath(strings.TrimSpace(nb.GitSSHKey), configDir)
+			if err != nil {
+				return runConfig{}, err
+			}
+		}
+		if fo.gitSSHKey.set {
+			curGitSSHKey = gitSSHKey
+		}
+
 		vault := nb.Vault
 		if len(fo.vaults) == 1 {
 			vault = fo.vaults[0]
@@ -560,6 +590,7 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 			gitRepo:         nb.GitRepo,
 			gitBranch:       curGitBranch,
 			gitRemote:       curGitRemote,
+			gitSSHKey:       curGitSSHKey,
 			gitPullInterval: curGitPullDur,
 			watchGitPull:    curGitPull,
 			theme:           exporter.ThemeMode(curTheme),
@@ -652,17 +683,17 @@ func prepareGitNotebooks(rc *runConfig) error {
 			nb.vault = filepath.Join(cacheRoot, nb.slug)
 		}
 
-		if err := ensureRepo(nb.vault, nb.gitRepo); err != nil {
+		if err := ensureRepo(nb.vault, nb.gitRepo, nb.gitSSHKey); err != nil {
 			return fmt.Errorf("%s: %w", nb.name, err)
 		}
-		if err := syncGitRepo(nb.vault, nb.gitRemote, nb.gitBranch); err != nil {
+		if err := syncGitRepo(nb.vault, nb.gitRemote, nb.gitBranch, nb.gitSSHKey); err != nil {
 			return fmt.Errorf("%s: %w", nb.name, err)
 		}
 	}
 	return nil
 }
 
-func ensureRepo(path, repo string) error {
+func ensureRepo(path, repo, sshKey string) error {
 	if fi, err := os.Stat(filepath.Join(path, ".git")); err == nil && fi.IsDir() {
 		return nil
 	}
@@ -679,6 +710,7 @@ func ensureRepo(path, repo string) error {
 		return err
 	}
 	cmd := exec.Command("git", "clone", repo, path)
+	applyGitSSHKey(cmd, sshKey)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git clone failed: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -686,28 +718,28 @@ func ensureRepo(path, repo string) error {
 	return nil
 }
 
-func syncGitRepo(vaultRoot, remote, preferredBranch string) error {
+func syncGitRepo(vaultRoot, remote, preferredBranch, sshKey string) error {
 	if remote == "" {
 		remote = "origin"
 	}
-	if _, err := gitOutput(vaultRoot, "fetch", remote, "--prune"); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "fetch", remote, "--prune"); err != nil {
 		return err
 	}
 	branch := preferredBranch
 	if branch == "" {
 		var err error
-		branch, err = pickBranch(vaultRoot, remote)
+		branch, err = pickBranch(vaultRoot, remote, sshKey)
 		if err != nil {
 			return err
 		}
 	}
-	if _, err := gitOutput(vaultRoot, "checkout", "-B", branch, remote+"/"+branch); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "checkout", "-B", branch, remote+"/"+branch); err != nil {
 		return err
 	}
-	if _, err := gitOutput(vaultRoot, "reset", "--hard", remote+"/"+branch); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "reset", "--hard", remote+"/"+branch); err != nil {
 		return err
 	}
-	if _, err := gitOutput(vaultRoot, "clean", "-fd"); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, "clean", "-fd"); err != nil {
 		return err
 	}
 	return nil
@@ -792,6 +824,7 @@ func runWatch(rc runConfig) error {
 			GitPullInterval: nb.gitPullInterval,
 			GitBranch:       nb.gitBranch,
 			GitRemote:       nb.gitRemote,
+			GitSSHKey:       nb.gitSSHKey,
 			NotebookName:    nb.name,
 		})
 	}
@@ -828,6 +861,7 @@ func runWatch(rc runConfig) error {
 				GitPullInterval: n.gitPullInterval,
 				GitBranch:       n.gitBranch,
 				GitRemote:       n.gitRemote,
+				GitSSHKey:       n.gitSSHKey,
 				NotebookName:    n.name,
 				AfterExport: func(_ string, _ exporter.Result) {
 					writeHub()
@@ -975,16 +1009,19 @@ Core flags:
   --theme string                 both|light|dark
   --watch-git-pull               Enable periodic git sync
   --watch-git-pull-interval dur  Git sync interval (default 5m)
+  --git-ssh-key path             SSH private key for git clone/fetch/pull
   --config path.yml              Settings file path (alternative to positional)
   -h, --help                     Show help
 
 Example settings.yml:
   out: ./site
   watch: true
+  git_ssh_key: ~/.ssh/id_ed25519
   notebooks:
     - name: Team Notes
       git_repo: git@github.com:org/team-notes.git
       git_branch: main
+      git_ssh_key: ~/.ssh/id_team_notes
       image: ./images/team-cover.jpg
       root_note: Home.md
     - name: Personal Vault
@@ -1054,10 +1091,10 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, in, 0o644)
 }
 
-func pickBranch(vaultRoot, remote string) (string, error) {
+func pickBranch(vaultRoot, remote, sshKey string) (string, error) {
 	candidates := []string{"main", "master"}
 	for _, c := range candidates {
-		_, err := gitOutput(vaultRoot, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+c)
+		_, err := gitOutput(vaultRoot, sshKey, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+c)
 		if err == nil {
 			return c, nil
 		}
@@ -1065,11 +1102,20 @@ func pickBranch(vaultRoot, remote string) (string, error) {
 	return "", fmt.Errorf("could not find %s/main or %s/master", remote, remote)
 }
 
-func gitOutput(vaultRoot string, args ...string) (string, error) {
+func gitOutput(vaultRoot, sshKey string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", vaultRoot}, args...)...)
+	applyGitSSHKey(cmd, sshKey)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func applyGitSSHKey(cmd *exec.Cmd, sshKey string) {
+	if strings.TrimSpace(sshKey) == "" {
+		return
+	}
+	escaped := strings.ReplaceAll(sshKey, `'`, `'"'"'`)
+	cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND=ssh -i '"+escaped+"' -o IdentitiesOnly=yes")
 }
