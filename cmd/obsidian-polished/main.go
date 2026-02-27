@@ -85,6 +85,7 @@ func (o *boolOpt) IsBoolFlag() bool { return true }
 
 type Settings struct {
 	Name            string             `yaml:"name"`
+	Description     string             `yaml:"description"`
 	Vault           string             `yaml:"vault"`
 	RootNote        string             `yaml:"root_note"`
 	Image           string             `yaml:"image"`
@@ -106,6 +107,7 @@ type Settings struct {
 
 type NotebookSettings struct {
 	Name            string `yaml:"name"`
+	Description     string `yaml:"description"`
 	Vault           string `yaml:"vault"`
 	RootNote        string `yaml:"root_note"`
 	Image           string `yaml:"image"`
@@ -122,6 +124,7 @@ type NotebookSettings struct {
 type notebookRuntime struct {
 	slug            string
 	name            string
+	description     string
 	vault           string
 	rootNote        string
 	image           string
@@ -415,6 +418,7 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 	} else {
 		nbDefs = append(nbDefs, NotebookSettings{
 			Name:            settings.Name,
+			Description:     settings.Description,
 			Vault:           settings.Vault,
 			RootNote:        settings.RootNote,
 			Image:           settings.Image,
@@ -549,6 +553,7 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 		notebooks = append(notebooks, notebookRuntime{
 			slug:            slug,
 			name:            name,
+			description:     strings.TrimSpace(nb.Description),
 			vault:           vault,
 			rootNote:        rootNote,
 			image:           nb.Image,
@@ -848,10 +853,10 @@ func writeHubIndex(rc runConfig) error {
 	}
 
 	type hubCard struct {
-		Name  string
-		Href  string
-		Image string
-		Vault string
+		Name        string
+		Description string
+		Href        string
+		Image       string
 	}
 	cards := make([]hubCard, 0, len(rc.notebooks))
 	for _, nb := range rc.notebooks {
@@ -859,7 +864,7 @@ func writeHubIndex(rc runConfig) error {
 		if err != nil {
 			return err
 		}
-		cards = append(cards, hubCard{Name: nb.name, Href: nb.indexHref, Image: img, Vault: nb.vault})
+		cards = append(cards, hubCard{Name: nb.name, Description: nb.description, Href: nb.indexHref, Image: img})
 	}
 	sort.Slice(cards, func(i, j int) bool {
 		return strings.ToLower(cards[i].Name) < strings.ToLower(cards[j].Name)
@@ -873,7 +878,11 @@ func writeHubIndex(rc runConfig) error {
 		} else {
 			b.WriteString(`<div class="placeholder">` + html.EscapeString(initials(c.Name)) + `</div>`)
 		}
-		b.WriteString(`<div class="meta"><h2>` + html.EscapeString(c.Name) + `</h2><p>` + html.EscapeString(c.Vault) + `</p></div></a>`)
+		b.WriteString(`<div class="meta"><h2>` + html.EscapeString(c.Name) + `</h2>`)
+		if c.Description != "" {
+			b.WriteString(`<p>` + html.EscapeString(c.Description) + `</p>`)
+		}
+		b.WriteString(`</div></a>`)
 	}
 
 	if err := writeBrandingAssets(rc.outRoot); err != nil {

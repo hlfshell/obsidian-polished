@@ -67,17 +67,19 @@ theme: both
 
 notebooks:
   - name: Team Notes
+    description: Team docs and architecture notes
     git_repo: git@github.com:org/team-notes.git
     git_branch: main
     image: ./images/team-cover.jpg
     root_note: Home.md
 
   - name: Personal Vault
+    description: Personal research and planning notes
     vault: /Users/you/Obsidian/Personal
     image: ./images/personal.jpg
 ```
 
-Notebook metadata (`name`, `image`) is shown on the hub `index.html`.
+Notebook metadata (`name`, optional `description`, `image`) is shown on the hub `index.html`.
 
 If a notebook has `git_repo` and no `vault`, `obsidian-polished` clones it locally into `<out>/.repos/<slug>` and watches from there.
 If `root_note` is omitted, that notebook exports from the vault root (all notes).

@@ -21,6 +21,7 @@ git_remote: origin
 notebooks:
   # Local vault notebook example
   - name: Personal Vault
+    description: Personal research and planning notes
     vault: /absolute/path/to/obsidian/personal-vault
     root_note: Home.md
     image: ./images/personal-cover.jpg
@@ -30,12 +31,14 @@ notebooks:
   # If `vault` is omitted, repo is cloned to <cache_dir>/<name-slug>.
   # If `root_note` is omitted, all notes are exported.
   - name: Team Notes
+    description: Team docs and architecture notes
     git_repo: git@github.com:your-org/team-notes.git
     git_branch: main
     image: ./images/team-cover.jpg
 
   # Another git-backed notebook with explicit clone location
   - name: Product Docs
+    description: Product playbooks and customer docs
     git_repo: git@github.com:your-org/product-docs.git
     vault: ./repos/product-docs
     git_branch: main
