@@ -27,6 +27,8 @@ services:
       OBS_GIT_BRANCH: ""
       # Set to an in-container key path when using SSH remotes, e.g. /root/.ssh/id_ed25519
       OBS_GIT_SSH_KEY: ""
+      # Set true to auto-trust first-seen SSH host keys for git remotes.
+      OBS_GIT_SSH_ACCEPT_NEW_HOST: "false"
 
       # Optional static hosting via nginx
       OBS_SERVE_STATIC: "true"

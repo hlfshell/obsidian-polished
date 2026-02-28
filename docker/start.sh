@@ -22,6 +22,7 @@ OBS_GIT_PULL_INTERVAL="${OBS_GIT_PULL_INTERVAL:-5m}"
 OBS_GIT_REMOTE="${OBS_GIT_REMOTE:-origin}"
 OBS_GIT_BRANCH="${OBS_GIT_BRANCH:-}"
 OBS_GIT_SSH_KEY="${OBS_GIT_SSH_KEY:-}"
+OBS_GIT_SSH_ACCEPT_NEW_HOST="${OBS_GIT_SSH_ACCEPT_NEW_HOST:-false}"
 OBS_SERVE_STATIC="${OBS_SERVE_STATIC:-false}"
 OBS_HTTP_PORT="${OBS_HTTP_PORT:-8080}"
 OBS_AUTH_ENABLED="${OBS_AUTH_ENABLED:-false}"
@@ -53,6 +54,9 @@ fi
 fi
 if [ -n "$OBS_GIT_SSH_KEY" ]; then
   set -- "$@" --git-ssh-key "$OBS_GIT_SSH_KEY"
+fi
+if is_true "$OBS_GIT_SSH_ACCEPT_NEW_HOST"; then
+  set -- "$@" --git-ssh-accept-new-host
 fi
 
 if is_true "$OBS_SERVE_STATIC"; then

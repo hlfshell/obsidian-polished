@@ -29,6 +29,7 @@ ENV OBS_VAULT=/data/vault \
     OBS_GIT_REMOTE=origin \
     OBS_GIT_BRANCH= \
     OBS_GIT_SSH_KEY= \
+    OBS_GIT_SSH_ACCEPT_NEW_HOST=false \
     OBS_SERVE_STATIC=false \
     OBS_HTTP_PORT=8080 \
     OBS_AUTH_ENABLED=false

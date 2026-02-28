@@ -93,6 +93,7 @@ type Settings struct {
 	GitBranch       string             `yaml:"git_branch"`
 	GitRemote       string             `yaml:"git_remote"`
 	GitSSHKey       string             `yaml:"git_ssh_key"`
+	GitSSHAcceptNew *bool              `yaml:"git_ssh_accept_new_host"`
 	WatchGitPull    *bool              `yaml:"watch_git_pull"`
 	GitPullInterval string             `yaml:"git_pull_interval"`
 	Out             string             `yaml:"out"`
@@ -116,6 +117,7 @@ type NotebookSettings struct {
 	GitBranch       string `yaml:"git_branch"`
 	GitRemote       string `yaml:"git_remote"`
 	GitSSHKey       string `yaml:"git_ssh_key"`
+	GitSSHAcceptNew *bool  `yaml:"git_ssh_accept_new_host"`
 	WatchGitPull    *bool  `yaml:"watch_git_pull"`
 	GitPullInterval string `yaml:"git_pull_interval"`
 	Theme           string `yaml:"theme"`
@@ -134,6 +136,7 @@ type notebookRuntime struct {
 	gitBranch       string
 	gitRemote       string
 	gitSSHKey       string
+	gitSSHAcceptNew bool
 	gitPullInterval time.Duration
 	watchGitPull    bool
 	theme           exporter.ThemeMode
@@ -181,6 +184,7 @@ func main() {
 		fWatchGitBranch  = stringOpt{}
 		fWatchGitRemote  = stringOpt{value: "origin"}
 		fGitSSHKey       = stringOpt{}
+		fGitSSHAcceptNew = boolOpt{}
 		fHelp            = boolOpt{}
 	)
 
@@ -203,6 +207,7 @@ func main() {
 	fs.Var(&fWatchGitBranch, "watch-git-branch", "Git branch to sync (default main/master)")
 	fs.Var(&fWatchGitRemote, "watch-git-remote", "Git remote name")
 	fs.Var(&fGitSSHKey, "git-ssh-key", "SSH private key for git operations")
+	fs.Var(&fGitSSHAcceptNew, "git-ssh-accept-new-host", "Automatically trust first-seen SSH host keys for git operations")
 	fs.Var(&fHelp, "h", "Show help")
 	fs.Var(&fHelp, "help", "Show help")
 
@@ -256,6 +261,7 @@ func main() {
 		gitBranch:       fWatchGitBranch,
 		gitRemote:       fWatchGitRemote,
 		gitSSHKey:       fGitSSHKey,
+		gitSSHAcceptNew: fGitSSHAcceptNew,
 	}, cfgArg != "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -306,6 +312,7 @@ type flagOverrides struct {
 	gitBranch       stringOpt
 	gitRemote       stringOpt
 	gitSSHKey       stringOpt
+	gitSSHAcceptNew boolOpt
 }
 
 func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromConfig bool) (runConfig, error) {
@@ -424,6 +431,13 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 			return runConfig{}, err
 		}
 	}
+	gitSSHAcceptNew := false
+	if settings.GitSSHAcceptNew != nil {
+		gitSSHAcceptNew = *settings.GitSSHAcceptNew
+	}
+	if fo.gitSSHAcceptNew.set {
+		gitSSHAcceptNew = fo.gitSSHAcceptNew.value
+	}
 
 	css := settings.CSS
 	if fo.css.set {
@@ -444,6 +458,7 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 			GitBranch:       settings.GitBranch,
 			GitRemote:       settings.GitRemote,
 			GitSSHKey:       settings.GitSSHKey,
+			GitSSHAcceptNew: settings.GitSSHAcceptNew,
 			WatchGitPull:    settings.WatchGitPull,
 			GitPullInterval: settings.GitPullInterval,
 			Theme:           settings.Theme,
@@ -541,6 +556,13 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 		if fo.gitSSHKey.set {
 			curGitSSHKey = gitSSHKey
 		}
+		curGitSSHAcceptNew := gitSSHAcceptNew
+		if nb.GitSSHAcceptNew != nil {
+			curGitSSHAcceptNew = *nb.GitSSHAcceptNew
+		}
+		if fo.gitSSHAcceptNew.set {
+			curGitSSHAcceptNew = fo.gitSSHAcceptNew.value
+		}
 
 		vault := nb.Vault
 		if len(fo.vaults) == 1 {
@@ -591,6 +613,7 @@ func buildRunConfig(settings Settings, configDir string, fo flagOverrides, fromC
 			gitBranch:       curGitBranch,
 			gitRemote:       curGitRemote,
 			gitSSHKey:       curGitSSHKey,
+			gitSSHAcceptNew: curGitSSHAcceptNew,
 			gitPullInterval: curGitPullDur,
 			watchGitPull:    curGitPull,
 			theme:           exporter.ThemeMode(curTheme),
@@ -683,17 +706,17 @@ func prepareGitNotebooks(rc *runConfig) error {
 			nb.vault = filepath.Join(cacheRoot, nb.slug)
 		}
 
-		if err := ensureRepo(nb.vault, nb.gitRepo, nb.gitSSHKey); err != nil {
+		if err := ensureRepo(nb.vault, nb.gitRepo, nb.gitSSHKey, nb.gitSSHAcceptNew); err != nil {
 			return fmt.Errorf("%s: %w", nb.name, err)
 		}
-		if err := syncGitRepo(nb.vault, nb.gitRemote, nb.gitBranch, nb.gitSSHKey); err != nil {
+		if err := syncGitRepo(nb.vault, nb.gitRemote, nb.gitBranch, nb.gitSSHKey, nb.gitSSHAcceptNew); err != nil {
 			return fmt.Errorf("%s: %w", nb.name, err)
 		}
 	}
 	return nil
 }
 
-func ensureRepo(path, repo, sshKey string) error {
+func ensureRepo(path, repo, sshKey string, sshAcceptNew bool) error {
 	if fi, err := os.Stat(filepath.Join(path, ".git")); err == nil && fi.IsDir() {
 		return nil
 	}
@@ -710,7 +733,7 @@ func ensureRepo(path, repo, sshKey string) error {
 		return err
 	}
 	cmd := exec.Command("git", "clone", repo, path)
-	applyGitSSHKey(cmd, sshKey)
+	applyGitSSHKey(cmd, sshKey, sshAcceptNew)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git clone failed: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -718,28 +741,28 @@ func ensureRepo(path, repo, sshKey string) error {
 	return nil
 }
 
-func syncGitRepo(vaultRoot, remote, preferredBranch, sshKey string) error {
+func syncGitRepo(vaultRoot, remote, preferredBranch, sshKey string, sshAcceptNew bool) error {
 	if remote == "" {
 		remote = "origin"
 	}
-	if _, err := gitOutput(vaultRoot, sshKey, "fetch", remote, "--prune"); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, sshAcceptNew, "fetch", remote, "--prune"); err != nil {
 		return err
 	}
 	branch := preferredBranch
 	if branch == "" {
 		var err error
-		branch, err = pickBranch(vaultRoot, remote, sshKey)
+		branch, err = pickBranch(vaultRoot, remote, sshKey, sshAcceptNew)
 		if err != nil {
 			return err
 		}
 	}
-	if _, err := gitOutput(vaultRoot, sshKey, "checkout", "-B", branch, remote+"/"+branch); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, sshAcceptNew, "checkout", "-B", branch, remote+"/"+branch); err != nil {
 		return err
 	}
-	if _, err := gitOutput(vaultRoot, sshKey, "reset", "--hard", remote+"/"+branch); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, sshAcceptNew, "reset", "--hard", remote+"/"+branch); err != nil {
 		return err
 	}
-	if _, err := gitOutput(vaultRoot, sshKey, "clean", "-fd"); err != nil {
+	if _, err := gitOutput(vaultRoot, sshKey, sshAcceptNew, "clean", "-fd"); err != nil {
 		return err
 	}
 	return nil
@@ -825,6 +848,7 @@ func runWatch(rc runConfig) error {
 			GitBranch:       nb.gitBranch,
 			GitRemote:       nb.gitRemote,
 			GitSSHKey:       nb.gitSSHKey,
+			GitSSHAcceptNew: nb.gitSSHAcceptNew,
 			NotebookName:    nb.name,
 		})
 	}
@@ -862,6 +886,7 @@ func runWatch(rc runConfig) error {
 				GitBranch:       n.gitBranch,
 				GitRemote:       n.gitRemote,
 				GitSSHKey:       n.gitSSHKey,
+				GitSSHAcceptNew: n.gitSSHAcceptNew,
 				NotebookName:    n.name,
 				AfterExport: func(_ string, _ exporter.Result) {
 					writeHub()
@@ -1010,6 +1035,7 @@ Core flags:
   --watch-git-pull               Enable periodic git sync
   --watch-git-pull-interval dur  Git sync interval (default 5m)
   --git-ssh-key path             SSH private key for git clone/fetch/pull
+  --git-ssh-accept-new-host      Auto-trust first-seen SSH host keys for git clone/fetch/pull
   --config path.yml              Settings file path (alternative to positional)
   -h, --help                     Show help
 
@@ -1017,6 +1043,7 @@ Example settings.yml:
   out: ./site
   watch: true
   git_ssh_key: ~/.ssh/id_ed25519
+  git_ssh_accept_new_host: true
   notebooks:
     - name: Team Notes
       git_repo: git@github.com:org/team-notes.git
@@ -1091,10 +1118,10 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, in, 0o644)
 }
 
-func pickBranch(vaultRoot, remote, sshKey string) (string, error) {
+func pickBranch(vaultRoot, remote, sshKey string, sshAcceptNew bool) (string, error) {
 	candidates := []string{"main", "master"}
 	for _, c := range candidates {
-		_, err := gitOutput(vaultRoot, sshKey, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+c)
+		_, err := gitOutput(vaultRoot, sshKey, sshAcceptNew, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+c)
 		if err == nil {
 			return c, nil
 		}
@@ -1102,9 +1129,9 @@ func pickBranch(vaultRoot, remote, sshKey string) (string, error) {
 	return "", fmt.Errorf("could not find %s/main or %s/master", remote, remote)
 }
 
-func gitOutput(vaultRoot, sshKey string, args ...string) (string, error) {
+func gitOutput(vaultRoot, sshKey string, sshAcceptNew bool, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", vaultRoot}, args...)...)
-	applyGitSSHKey(cmd, sshKey)
+	applyGitSSHKey(cmd, sshKey, sshAcceptNew)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -1112,10 +1139,17 @@ func gitOutput(vaultRoot, sshKey string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func applyGitSSHKey(cmd *exec.Cmd, sshKey string) {
-	if strings.TrimSpace(sshKey) == "" {
+func applyGitSSHKey(cmd *exec.Cmd, sshKey string, sshAcceptNew bool) {
+	if strings.TrimSpace(sshKey) == "" && !sshAcceptNew {
 		return
 	}
-	escaped := strings.ReplaceAll(sshKey, `'`, `'"'"'`)
-	cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND=ssh -i '"+escaped+"' -o IdentitiesOnly=yes -o BatchMode=yes")
+	parts := []string{"ssh", "-o BatchMode=yes"}
+	if strings.TrimSpace(sshKey) != "" {
+		escaped := strings.ReplaceAll(sshKey, `'`, `'"'"'`)
+		parts = append(parts, "-i '"+escaped+"'", "-o IdentitiesOnly=yes")
+	}
+	if sshAcceptNew {
+		parts = append(parts, "-o StrictHostKeyChecking=accept-new", "-o UserKnownHostsFile=/tmp/obsidian_polished_known_hosts")
+	}
+	cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND="+strings.Join(parts, " "))
 }

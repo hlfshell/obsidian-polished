@@ -20,6 +20,8 @@ git_remote: origin
 # Optional global SSH key for git clone/fetch/pull.
 # Relative paths are resolved from this settings file directory.
 git_ssh_key: ~/.ssh/id_ed25519
+# Optional: trust new SSH host keys on first connect for git operations.
+git_ssh_accept_new_host: false
 
 notebooks:
   # Local vault notebook example
@@ -38,6 +40,7 @@ notebooks:
     git_repo: git@github.com:your-org/team-notes.git
     git_branch: main
     git_ssh_key: ~/.ssh/id_team_notes
+    git_ssh_accept_new_host: false
     image: ./images/team-cover.jpg
 
   # Another git-backed notebook with explicit clone location

@@ -102,6 +102,7 @@ If you use private SSH git remotes in Docker/Compose, make sure the container ha
 - `ssh` client available (installed in this image)
 - `OBS_GIT_SSH_KEY` set to an in-container key path (for example `/root/.ssh/id_ed25519`)
 - SSH key and `known_hosts` mounted read-only into the container
+- Or set `OBS_GIT_SSH_ACCEPT_NEW_HOST=true` to auto-trust first-seen host keys
 
 ## CLI
 
@@ -124,7 +125,8 @@ Watch with git pull:
   --watch \
   --watch-git-pull \
   --watch-git-pull-interval 5m \
-  --git-ssh-key ~/.ssh/id_ed25519
+  --git-ssh-key ~/.ssh/id_ed25519 \
+  --git-ssh-accept-new-host
 ```
 
 ## Settings File
@@ -152,6 +154,7 @@ watch_poll: 2s
 watch_debounce: 1s
 theme: both
 git_ssh_key: ~/.ssh/id_ed25519
+git_ssh_accept_new_host: true
 
 notebooks:
   - name: Team Notes
@@ -159,6 +162,7 @@ notebooks:
     git_repo: git@github.com:org/team-notes.git
     git_branch: main
     git_ssh_key: ~/.ssh/id_team_notes
+    git_ssh_accept_new_host: true
     image: ./images/team-cover.jpg
     root_note: Home.md
 
@@ -186,6 +190,7 @@ If `root_note` is omitted, that notebook exports from the vault root (all notes)
 - `--watch-git-branch` sync branch (`main`/`master` auto when empty)
 - `--watch-git-remote` remote name (default `origin`)
 - `--git-ssh-key` SSH private key file for git clone/fetch/pull
+- `--git-ssh-accept-new-host` auto-trust first-seen SSH host keys for git clone/fetch/pull
 - `--theme` `both|light|dark`
 - `--css` custom stylesheet for notebook pages
 - `--zip` / `--zip-path` zip output (single notebook only)
