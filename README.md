@@ -98,6 +98,11 @@ just compose-down docker-compose.yml --remove-orphans
 just compose docker-compose.yml logs -f
 ```
 
+If you use private SSH git remotes in Docker/Compose, make sure the container has:
+- `ssh` client available (installed in this image)
+- `OBS_GIT_SSH_KEY` set to an in-container key path (for example `/root/.ssh/id_ed25519`)
+- SSH key and `known_hosts` mounted read-only into the container
+
 ## CLI
 
 No arguments now shows help (same as `-h` / `--help`).

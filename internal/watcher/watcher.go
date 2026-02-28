@@ -406,7 +406,7 @@ func applyGitSSHKey(cmd *exec.Cmd, sshKey string) {
 		return
 	}
 	escaped := strings.ReplaceAll(sshKey, `'`, `'"'"'`)
-	cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND=ssh -i '"+escaped+"' -o IdentitiesOnly=yes")
+	cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND=ssh -i '"+escaped+"' -o IdentitiesOnly=yes -o BatchMode=yes")
 }
 
 func isExcluded(rel string) bool {

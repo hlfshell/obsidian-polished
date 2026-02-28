@@ -25,6 +25,7 @@ services:
       OBS_GIT_PULL_INTERVAL: 5m
       OBS_GIT_REMOTE: origin
       OBS_GIT_BRANCH: ""
+      # Set to an in-container key path when using SSH remotes, e.g. /root/.ssh/id_ed25519
       OBS_GIT_SSH_KEY: ""
 
       # Optional static hosting via nginx
@@ -38,3 +39,6 @@ services:
     volumes:
       - ./vault:/data/vault
       - ./output:/data/out
+      # Optional for private SSH remotes:
+      # - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+      # - ${HOME}/.ssh/known_hosts:/root/.ssh/known_hosts:ro
